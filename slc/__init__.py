@@ -107,8 +107,6 @@ class Socket:
     def send(self, data, target=None):
         """Send data to the peer.
         TODO: Can send any kind of data"""
-        if self.state == 'client':
-            assert target is not None, "Target must be set if socket is client."
         self.lock.acquire()
         data_size = struct.pack('!I', len(data))
         for key in self.data_to_send.keys():
@@ -120,10 +118,10 @@ class Socket:
         data_to_return = None
         while True:
             self.lock.acquire()
-            for target, _ in self.sockets.items():
+            for target in self.data_received.keys():
                 try:
                     data_size = struct.unpack('!I', self.data_received[target][:4])[0]
-                except struct.error:
+                except struct.error as e:
                     continue
                 if len(self.data_received[target]) - 4 >= data_size:
                     data_to_return = self.data_received[target][4:data_size + 4]
@@ -137,6 +135,9 @@ class Socket:
             break
             
         return data_to_return
+
+    def shutdown(self):
+        """TODO!"""
 
     def _clientHandle(self):
         """TODO: one socket per thread to prevent create_connection delays."""

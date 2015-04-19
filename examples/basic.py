@@ -1,6 +1,8 @@
 from slc import Socket
 import time
 
+# Testing sending form client
+
 a = Socket()
 b = Socket()
 
@@ -16,6 +18,8 @@ data = a.receive()
 print("Data received:")
 print(data)
 
+# Testing sending from the server
+
 c = Socket()
 d = Socket()
 
@@ -24,7 +28,7 @@ c.listen(27182)
 print("connect")
 d.connect(27182)
 
-time.sleep(0.1)
+time.sleep(0.1) # Wait for the server to receive the connection from the client
 
 print("send")
 d.send(b'Poulailler', '127.0.0.1')
@@ -33,6 +37,7 @@ data = c.receive()
 print("Data received:")
 print(data)
 
+# Testing broadcast
 
 e = Socket()
 f = Socket()
@@ -53,3 +58,21 @@ print("Recv 1")
 print(f.receive())
 print("Recv 2")
 print(g.receive())
+
+
+# Testing multiple connection sending by a client
+
+h = Socket()
+i = Socket()
+j = Socket()
+h.listen(16180)
+i.listen(12020)
+j.connect(16180)
+j.connect(12020)
+
+time.sleep(0.1)
+
+j.send(b'Patate')
+print(h.receive())
+print(i.receive())
+
