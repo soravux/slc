@@ -6,7 +6,7 @@ Simple Lightweight Communications
 * Simple and Lightweight
 * Allows one-to-one and one-to-many (publisher - subscriber) communications
 * Auto-reconnection on connection lost (TODO)
-* Zero Configuration, discovery (TODO)
+* Zero Configuration, service discovery (TODO)
 * Throttling (TODO)
 * Security (TODO)
 * RPC (TODO)
