@@ -130,7 +130,10 @@ class Socket:
             else:
                 self.lock.release()
                 time.sleep(self.poll_delay)
-                continue
+                if blocking:
+                    continue
+                else:
+                    break
             self.lock.release()
             break
             
