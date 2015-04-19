@@ -32,3 +32,24 @@ print("receive")
 data = c.receive()
 print("Data received:")
 print(data)
+
+
+e = Socket()
+f = Socket()
+g = Socket()
+
+print("Listen")
+e.listen(14142)
+print("Connect 1")
+f.connect(14142)
+print("Connect 2")
+g.connect(14142)
+
+time.sleep(0.1)
+
+print("Sending")
+e.send(b'broadcast')
+print("Recv 1")
+print(f.receive())
+print("Recv 2")
+print(g.receive())

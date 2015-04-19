@@ -40,7 +40,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         while not self.server.shutdown_requested_why_is_this_variable_mangled_by_default:
             if self.server.parent_socket.data_to_send[self]:
                 self.server.parent_socket.lock.acquire()
-                for data in self.data_to_send[self]:
+                for data in self.server.parent_socket.data_to_send[self]:
                     self.request.sendall(data)
 
                 self.server.parent_socket.data_to_send[self] = []
