@@ -10,3 +10,4 @@ Simple Lightweight Communications
 * Throttling (TODO)
 * Security (TODO)
 * RPC (TODO)
+* Support multiple backends (RDMA, UDP, IGMP, ...)
