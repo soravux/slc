@@ -28,7 +28,7 @@ data1, data2 = a.receive(), b.receive()
 
 ## Features (work in progress)
 
-* Simple and Lightweight
+* Simple, Lightweight and Portable
 * Allows one-to-one and one-to-many (publisher - subscriber) communications
 * Auto-reconnection on connection lost (TODO)
 * Zero Configuration, service discovery (TODO)
