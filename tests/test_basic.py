@@ -154,7 +154,3 @@ def test_CreateTwoServersBackToBack():
     assert data[0] == data_out
 
     b.shutdown(); c.shutdown()
-
-
-if __name__ == '__main__':
-    test_CreateTwoServersBackToBack()
