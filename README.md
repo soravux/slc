@@ -43,3 +43,4 @@ data1, data2 = a.receive(), b.receive()
 * Allow multiple listen from a single socket
 * Allow socket to listen and connect at the same time (wouldn't that be a bit complex?)
 * Add source of message in receive()
+* Add a way to know when the client is connected to the server. (connect() blocking? method that returns if connection is successful?)
