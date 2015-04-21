@@ -1,4 +1,5 @@
 import logging
+import select
 import os
 import sys
 import time
@@ -6,6 +7,7 @@ import threading
 import struct
 import socket
 import socketserver
+import pickle
 from collections import defaultdict
 
 
@@ -110,12 +112,16 @@ class Socket:
         self.port = self.server.socket.getsockname()[1]
 
     def send(self, data, target=None):
-        """Send data to the peer.
-        TODO: Can send any kind of data"""
+        """Send data to the peer."""
         self.lock.acquire()
-        data_size = struct.pack('!I', len(data))
-        for key in self.data_to_send.keys():
-            self.data_to_send[key].append(data_size + data)
+        data_serialized = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
+        data_size = struct.pack('!I', len(data_serialized))
+        if target:
+            self.data_to_send[target].append(data_size + data_serialized)
+        else:
+            # Send to all
+            for key in self.data_to_send.keys():
+                self.data_to_send[key].append(data_size + data_serialized)
         self.lock.release()
 
     def receive(self, blocking=True):
@@ -142,7 +148,7 @@ class Socket:
             self.lock.release()
             break
             
-        return data_to_return
+        return pickle.loads(data_to_return)
 
     def shutdown(self):
         self.state = None
@@ -180,6 +186,18 @@ class Socket:
 
             # TODO: Delete one by one to increase performance on large amount of data?
             for target, socket_ in self.sockets.items():
+                # Check if socket is still alive
+                try:
+                    ready_to_read, ready_to_write, in_error = \
+                        select.select([socket_,], [socket_,], [], 0)
+                except select.error:
+                    socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                    socket_.close()
+                    self.lock.acquire()
+                    self.sockets.pop(target)
+                    self.lock.release()
+                    break
+
                 if self.data_to_send:
                     self.lock.acquire()
                     for data in self.data_to_send[target]:
