@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 import threading
 import struct
@@ -24,6 +25,7 @@ def initLogging(stream=None):
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True   # Kills threads on ctrl-c
+    allow_reuse_address = True
 
     def __init__(self, parent_socket, *args, **kwargs):
         self.parent_socket = parent_socket
@@ -75,6 +77,7 @@ class Socket:
         self.data_received = defaultdict(bytearray)
         self.target_addresses = []
         self.source_addresses = []
+        self.port = None
 
     def connect(self, port, address='127.0.0.1', source_address=None):
         """Act as a client"""
@@ -88,7 +91,7 @@ class Socket:
         self.thread.daemon = True
         self.thread.start()
 
-    def listen(self, port, address='0.0.0.0'):
+    def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
         self._cleanup()
         self.state = 'server'
@@ -98,11 +101,12 @@ class Socket:
             (address, port),
             SocketserverHandler,
         )
-        self.server.allow_reuse_address = True
         self.server.shutdown_requested_why_is_this_variable_mangled_by_default = False
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.daemon = True
         self.thread.start()
+
+        self.port = self.server.socket.getsockname()[1]
 
     def send(self, data, target=None):
         """Send data to the peer.
@@ -140,7 +144,7 @@ class Socket:
         return data_to_return
 
     def shutdown(self):
-        """TODO!"""
+        self._cleanup()
 
     def _clientHandle(self):
         """TODO: one socket per thread to prevent create_connection delays."""

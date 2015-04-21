@@ -12,7 +12,7 @@ print("connect")
 b.connect(31415)
 
 print("send")
-b.send(b'test', '127.0.0.1')
+b.send(b'test')
 print("receive")
 data = a.receive()
 print("Data received:")
