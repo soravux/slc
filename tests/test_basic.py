@@ -19,6 +19,7 @@ second_data = [
     b'Time is a drug. Too much of it kills you.',
 ]
 
+
 def test_ShutdownSimple():
     a = Socket()
 
@@ -136,3 +137,24 @@ def test_SendMultipleData(data_in1, data_in2):
     assert data_in2 == data_out2
 
     a.shutdown(); b.shutdown()
+
+
+def test_CreateTwoServersBackToBack():
+    a = Socket()
+    b = Socket()
+    c = Socket()
+
+    a.listen()
+    a.shutdown()
+    b.listen(a.port)
+    c.connect(b.port)
+
+    c.send(data[0])
+    data_out = b.receive()
+    assert data[0] == data_out
+
+    b.shutdown(); c.shutdown()
+
+
+if __name__ == '__main__':
+    test_CreateTwoServersBackToBack()

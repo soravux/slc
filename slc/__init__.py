@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import time
 import threading
@@ -93,7 +94,7 @@ class Socket:
 
     def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
-        self._cleanup()
+        self.shutdown() # TODO: Needed?
         self.state = 'server'
 
         self.server = ThreadedTCPServer(
@@ -144,7 +145,28 @@ class Socket:
         return data_to_return
 
     def shutdown(self):
-        self._cleanup()
+        self.state = None
+
+        sockets_to_clean = list(self.sockets.values())
+        if self.server:
+            sockets_to_clean.append(self.server.socket)
+            self.server.shutdown_requested_why_is_this_variable_mangled_by_default = True
+            self.server.shutdown()
+
+        if self.thread and self.thread.is_alive():
+            self.thread.join()
+
+        # TODO: Hum, analyze the impact of this
+        for socket_ in sockets_to_clean:
+            if socket_._closed:
+                continue
+            l_onoff = 1
+            l_linger = 0
+            socket_.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                          struct.pack('hh' if os.name == 'nt' else 'ii', l_onoff, l_linger))
+            socket_.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            time.sleep(0.1)
+            socket_.close()
 
     def _clientHandle(self):
         """TODO: one socket per thread to prevent create_connection delays."""
@@ -152,7 +174,7 @@ class Socket:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
                     self.sockets[target] = socket.create_connection(target,
-                                                                    timeout=10,
+                                                                    timeout=5,
                                                                     source_address=self.source_addresses[idx])
                     self.sockets[target].setblocking(0)
 
@@ -175,13 +197,3 @@ class Socket:
                     self.lock.release()
 
             time.sleep(self.poll_delay)
-
-    def _cleanup(self):
-        self.state = None
-
-        if self.server:
-            self.server.shutdown_requested_why_is_this_variable_mangled_by_default = True
-            self.server.shutdown()
-
-        if self.thread and self.thread.is_alive():
-            self.thread.join()
