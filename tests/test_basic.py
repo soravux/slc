@@ -154,3 +154,22 @@ def test_CreateTwoServersBackToBack():
     assert data[0] == data_out
 
     b.shutdown(); c.shutdown()
+
+
+def test_Security():
+    a = Socket(secure=True)
+    b = Socket(secure=True)
+
+    a.listen()
+    b.connect(a.port)
+
+    time.sleep(0.3)
+
+    b.send(data[0])
+    data_out = a.receive()
+    print(data_out)
+    assert data_out == data[0]
+
+
+if __name__ == '__main__':
+    test_Security()

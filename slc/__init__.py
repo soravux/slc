@@ -8,22 +8,33 @@ import struct
 import socket
 import socketserver
 import pickle
+import zlib
 from collections import defaultdict
 
-
-class ConnectionError(Exception):
-    pass
+from . import security
 
 
 def initLogging(stream=None):
     """Initialize the logger. Thanks to snakemq."""
     logger = logging.getLogger("slc")
-    logger.setLevel(logging.CRITICAL)
+    logger.setLevel(logging.WARNING)
     handler = logging.StreamHandler(stream)
     handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+
+initLogging()
+
+
+class SOCKET_CONFIG:
+    NORMAL = 0b00000000
+    ENCRYPTED = 0b00000001
+    COMPRESSED = 0b00000010
+
+
+class ConnectionError(Exception):
+    pass
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -37,35 +48,54 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class SocketserverHandler(socketserver.BaseRequestHandler):
     def setup(self):
-        self.server.parent_socket.data_to_send[self]
+        self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IB', 0, self.server.parent_socket.config)]
         self.request.setblocking(0)
-        self.server.parent_socket.sockets[self] = self.request
+        self.server.parent_socket.sockets[self.client_address] = self.request
+
+        if self.server.parent_socket.secure:
+            our_key = pickle.dumps(security.getOurPublicKey())
+            data_size = struct.pack('!I', len(our_key))
+            self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
+
+        self.header_received = False
 
     def handle(self):
         while not self.server.shutdown_requested_why_is_this_variable_mangled_by_default:
-            if self.server.parent_socket.data_to_send[self]:
+            if self.server.parent_socket.data_to_send[self.client_address]:
                 self.server.parent_socket.lock.acquire()
-                for data in self.server.parent_socket.data_to_send[self]:
+                for data in self.server.parent_socket.data_to_send[self.client_address]:
                     self.request.sendall(data)
 
-                self.server.parent_socket.data_to_send[self] = []
+                self.server.parent_socket.data_to_send[self.client_address] = []
                 self.server.parent_socket.lock.release()
 
             self.server.parent_socket.lock.acquire()
             try:
-                self.server.parent_socket.data_received[self].extend(self.request.recv(4096))
+                self.server.parent_socket.data_received[self.client_address].extend(self.request.recv(4096))
             except socket.error:
                 pass
-            self.server.parent_socket.lock.release()
 
-            time.sleep(self.server.parent_socket.poll_delay)
+            if not self.header_received:
+                self.header_received = self.server.parent_socket.receive(source=self.client_address, blocking=False, _locks=False)
+
+            if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
+                source_key = self.server.parent_socket.receive(source=self.client_address, blocking=False, _locks=False)
+                if source_key:
+                    self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
+            self.server.parent_socket.lock.release()
+            #print("server Here!", self.header_received, self.server.parent_socket.crypto_boxes if self.server.parent_socket.secure else 0)
+
+            time.sleep(self.server.parent_socket.poll_delay) # Replace by select
 
     def finish(self):
-        self.server.parent_socket.data_to_send.pop(self)
+        try:
+            self.server.parent_socket.data_to_send.pop(self)
+        except KeyError:
+            pass
 
 
 class Socket:
-    def __init__(self, type_="tcp"):
+    def __init__(self, secure=False, compressed=False, type_="tcp"):
         """Builds a new SLC socket."""
         self.type_ = type_
         self.thread = None
@@ -73,31 +103,53 @@ class Socket:
         self.state = None
         self.buffer = 4096
         self.sockets = {}
+        self.sockets_config = defaultdict(int)
         self.server = None
-        self.logger = logging.getLogger("slc")
         self.poll_delay = 0.1
         self.data_to_send = defaultdict(list)
         self.data_received = defaultdict(bytearray)
         self.target_addresses = []
         self.source_addresses = []
         self.port = None
+        self.secure = secure * SOCKET_CONFIG.ENCRYPTED
+        self.compressed = compressed * SOCKET_CONFIG.COMPRESSED
+        self.config = self.secure | self.compressed
+
+        if self.secure:
+            self.crypto_boxes = {}
 
     def connect(self, port, address='127.0.0.1', source_address=None):
         """Act as a client"""
         self.state = "client"
         self.target_addresses.append((address, port))
         self.source_addresses.append(source_address)
+        target = (address, port)
 
-        self.data_to_send[(address, port)] = []
+        # Send configuration
+        self.data_to_send[target] = [struct.pack('!IB', 0, self.config)]
+
+        if self.secure:
+            our_key = pickle.dumps(security.getOurPublicKey())
+            data_size = struct.pack('!I', len(our_key))
+            self.data_to_send[target].append(data_size + our_key)
 
         self.thread = threading.Thread(target=self._clientHandle)
         self.thread.daemon = True
         self.thread.start()
 
+        # TODO: Launch a new thread to do that
+        self.receive(source=target) # Get the header
+        if self.secure:
+            remote_key = self.receive(source=target) # Get the remote key
+            self.crypto_boxes[target] = security.getBox(remote_key, target)
+
     def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
         self.shutdown() # TODO: Needed?
         self.state = 'server'
+
+        if self.secure:
+            security.initializeSecurity()
 
         self.server = ThreadedTCPServer(
             self,
@@ -111,44 +163,72 @@ class Socket:
 
         self.port = self.server.socket.getsockname()[1]
 
+    def _prepareData(self, data, target):
+        # TODO: pickle.HIGHEST_PROTOCOL gives a pretty large output.
+        stream = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
+        if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
+            stream = zlib.compress(stream)
+        if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED:
+            stream = self.crypto_boxes[target].encrypt(stream)
+        return stream
+
     def send(self, data, target=None):
         """Send data to the peer."""
-        self.lock.acquire()
-        data_serialized = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
-        data_size = struct.pack('!I', len(data_serialized))
-        if target:
-            self.data_to_send[target].append(data_size + data_serialized)
-        else:
-            # Send to all
-            for key in self.data_to_send.keys():
-                self.data_to_send[key].append(data_size + data_serialized)
-        self.lock.release()
+        targets = self.data_to_send.keys() if not target else [target]
+        for key in targets:
+            data_serialized = self._prepareData(data, key)
+            data_size = struct.pack('!I', len(data_serialized))
+            self.lock.acquire()
+            self.data_to_send[key].append(data_size + data_serialized)
+            self.lock.release()
 
-    def receive(self, blocking=True):
+    def receive(self, source=None, blocking=True, _locks=True):
         """Receive data from the peer."""
         data_to_return = None
+        config_header_size = 5
+        targets = self.data_received.keys() if source is None else [source]
         while True:
-            self.lock.acquire()
-            for target in self.data_received.keys():
+            if _locks:
+                self.lock.acquire()
+            for target in targets:
                 try:
                     data_size = struct.unpack('!I', self.data_received[target][:4])[0]
                 except struct.error as e:
                     continue
-                if len(self.data_received[target]) - 4 >= data_size:
+                if data_size == 0 and len(self.data_received[target]) >= config_header_size:
+                    # data_size == 0 means header
+                    preliminary_config = struct.unpack('!B', self.data_received[target][4:config_header_size])[0]
+                    assert preliminary_config == self.config, "Both sockets must have the same configuration."
+                    self.data_received[target] = self.data_received[target][config_header_size:]
+                    self.sockets_config[target] = preliminary_config
+                    if _locks:
+                        self.lock.release()
+                    return True # Move that and the previous if elsewhere?
+                elif len(self.data_received[target]) - 4 >= data_size:
                     data_to_return = self.data_received[target][4:data_size + 4]
+                    msg_source = target
                     self.data_received[target] = self.data_received[target][data_size + 4:]
                     break
             else:
-                self.lock.release()
+                if _locks:
+                    self.lock.release()
                 time.sleep(self.poll_delay)
                 if blocking:
                     continue
                 else:
                     break
-            self.lock.release()
+            if _locks:
+                self.lock.release()
             break
-            
-        return pickle.loads(data_to_return)
+
+        if data_to_return:
+            if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED and msg_source in self.crypto_boxes:
+                print(data_to_return)
+                data_to_return = self.crypto_boxes[msg_source].decrypt(data_to_return)
+            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
+                data_to_return = zlib.decompress(data_to_return)
+                
+            return pickle.loads(data_to_return)
 
     def shutdown(self):
         self.state = None
@@ -169,7 +249,7 @@ class Socket:
             l_onoff = 1
             l_linger = 0
             socket_.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-                                          struct.pack('hh' if os.name == 'nt' else 'ii', l_onoff, l_linger))
+                               struct.pack('hh' if os.name == 'nt' else 'ii', l_onoff, l_linger))
             socket_.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             time.sleep(0.1)
             socket_.close()
@@ -198,7 +278,7 @@ class Socket:
                     self.lock.release()
                     break
 
-                if self.data_to_send:
+                if self.data_to_send[target]:
                     self.lock.acquire()
                     for data in self.data_to_send[target]:
                         socket_.sendall(data)
@@ -211,7 +291,6 @@ class Socket:
                     self.data_received[target].extend(socket_.recv(4096))
                 except socket.error:
                     pass
-                finally:
-                    self.lock.release()
+                self.lock.release()
 
-            time.sleep(self.poll_delay)
+            time.sleep(self.poll_delay) # Replace by select
