@@ -43,9 +43,9 @@ def stringToFilename(data):
     valid_chars = "-_.%s%s" % (string.ascii_letters, string.digits)
     return ''.join(c for c in data if c in valid_chars)
 
+
 def getBox(remoteKey, target):
     target = stringToFilename(str(target[0]))
-    print("remotekey:", remoteKey)
     target_key_path = (jn(slc_path, target))
     if os.path.isfile(target_key_path):
         with open(target_key_path, 'rb') as fhdl:
@@ -60,6 +60,7 @@ def getBox(remoteKey, target):
         logger.warning('Added key for {} in wallet.'.format(target))
 
     return libnacl.public.Box(hostkey.sk, remoteKey)
+
 
 def getOurPublicKey():
     if 'hostkey' not in globals():

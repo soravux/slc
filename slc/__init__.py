@@ -224,7 +224,7 @@ class Socket:
         if data_to_return:
             if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED and msg_source in self.crypto_boxes:
                 print(data_to_return)
-                data_to_return = self.crypto_boxes[msg_source].decrypt(data_to_return)
+                data_to_return = self.crypto_boxes[msg_source].decrypt(bytes(data_to_return))
             if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
                 data_to_return = zlib.decompress(data_to_return)
                 
@@ -255,7 +255,7 @@ class Socket:
             socket_.close()
 
     def _clientHandle(self):
-        """TODO: one socket per thread to prevent create_connection delays."""
+        """TODO: one socket per thread to prevent create_connection delays?"""
         while self.state == 'client':
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
