@@ -36,10 +36,10 @@ data1, data2 = a.receive(), b.receive()
 * Security (TODO)
 * RPC (TODO)
 * Support multiple backends (RDMA, UDP, IGMP, ...)
+* Compression (TODO)
 
 ## API TODO
 
-* Accept anything in send input
 * Allow multiple listen from a single socket
 * Allow socket to listen and connect at the same time (wouldn't that be a bit complex?)
 * Add source of message in receive()
