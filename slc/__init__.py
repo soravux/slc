@@ -83,7 +83,6 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                 if source_key:
                     self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
             self.server.parent_socket.lock.release()
-            #print("server Here!", self.header_received, self.server.parent_socket.crypto_boxes if self.server.parent_socket.secure else 0)
 
             time.sleep(self.server.parent_socket.poll_delay) # Replace by select
 
@@ -126,12 +125,7 @@ class Socket:
         target = (address, port)
 
         # Send configuration
-        self.data_to_send[target] = [struct.pack('!IB', 0, self.config)]
-
-        if self.secure:
-            our_key = pickle.dumps(security.getOurPublicKey())
-            data_size = struct.pack('!I', len(our_key))
-            self.data_to_send[target].append(data_size + our_key)
+        self.data_to_send[target] = []
 
         self.thread = threading.Thread(target=self._clientHandle)
         self.thread.daemon = True
@@ -223,7 +217,6 @@ class Socket:
 
         if data_to_return:
             if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED and msg_source in self.crypto_boxes:
-                print(data_to_return)
                 data_to_return = self.crypto_boxes[msg_source].decrypt(bytes(data_to_return))
             if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
                 data_to_return = zlib.decompress(data_to_return)
@@ -264,6 +257,16 @@ class Socket:
                                                                     source_address=self.source_addresses[idx])
                     self.sockets[target].setblocking(0)
 
+                    # Send SLC header
+                    self.lock.acquire()
+                    self.data_to_send[target].insert(0, struct.pack('!IB', 0, self.config))
+
+                    if self.secure:
+                        our_key = pickle.dumps(security.getOurPublicKey())
+                        data_size = struct.pack('!I', len(our_key))
+                        self.data_to_send[target].insert(1, data_size + our_key)
+                    self.lock.release()
+
             # TODO: Delete one by one to increase performance on large amount of data?
             for target, socket_ in self.sockets.items():
                 # Check if socket is still alive
@@ -281,7 +284,7 @@ class Socket:
                 if self.data_to_send[target]:
                     self.lock.acquire()
                     for data in self.data_to_send[target]:
-                        socket_.sendall(data)
+                        res = socket_.sendall(data)
 
                     self.data_to_send[target][:] = []
                     self.lock.release()

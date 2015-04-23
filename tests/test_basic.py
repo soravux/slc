@@ -9,8 +9,7 @@ from slc import Socket
 data = [
     b'Not all those who wander are lost.',
     b'Time is a drug. Too much of it kills you.',
-    b'The mirror does not reflect evil, but creates it.',
-    'Not all those who wander are lost.',
+    'The mirror does not reflect evil, but creates it.',
     15,
 ]
 
@@ -117,7 +116,8 @@ def test_SendToAllServers(data_in):
     time.sleep(0.1)
     c.send(data_in)
     data_out1, data_out2 = a.receive(), b.receive()
-    assert data_in == data_out1 == data_out2
+    assert data_in == data_out1
+    assert data_in == data_out2
 
     a.shutdown(); b.shutdown(); c.shutdown()
 
@@ -156,19 +156,19 @@ def test_CreateTwoServersBackToBack():
     b.shutdown(); c.shutdown()
 
 
-def test_Security():
+@pytest.mark.parametrize("data_in", data)
+def test_Security(data_in):
     a = Socket(secure=True)
     b = Socket(secure=True)
 
     a.listen()
     b.connect(a.port)
 
-    time.sleep(0.3)
+    time.sleep(0.1)
 
-    b.send(data[0])
+    b.send(data_in)
     data_out = a.receive()
-    print(data_out)
-    assert data_out == data[0]
+    assert data_out == data_in
 
 
 if __name__ == '__main__':

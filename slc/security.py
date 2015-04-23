@@ -58,7 +58,6 @@ def getBox(remoteKey, target):
         with open(target_key_path, 'wb') as fhdl:
             fhdl.write(remoteKey)
         logger.warning('Added key for {} in wallet.'.format(target))
-
     return libnacl.public.Box(hostkey.sk, remoteKey)
 
 
