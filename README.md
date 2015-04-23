@@ -33,15 +33,16 @@ data1, data2 = a.receive(), b.receive()
 * Auto-reconnection on connection lost (TODO)
 * Zero Configuration, service discovery (TODO)
 * Throttling (TODO)
-* Security (TODO)
+* Security (WIP)
 * RPC (TODO)
 * Support multiple backends (RDMA, UDP, IGMP, ...)
-* Compression (TODO)
+* Compression (WIP)
 
 ## API TODO
 
 * Allow multiple listen from a single socket
-* Allow socket to listen and connect at the same time (wouldn't that be a bit complex?)
+* Allow socket to listen and connect at the same time
 * Add source of message in receive()
-* Add a way to know when the client is connected to the server. (connect() blocking? method that returns if connection is successful?)
+* Add support for list of sources in receive()
+* Add a way to know when the client is connected to the server. (method that returns if connection is successful for client or the number of clients successfully connected to the server)
 * Support data more than 2**32 (maybe?)
