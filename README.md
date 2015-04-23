@@ -30,13 +30,13 @@ data1, data2 = a.receive(), b.receive()
 
 * Simple, Lightweight and Portable
 * Allows one-to-one and one-to-many (publisher - subscriber) communications
+* Compression
+* Security
 * Auto-reconnection on connection lost (TODO)
 * Zero Configuration, service discovery (TODO)
 * Throttling (TODO)
-* Security (WIP)
 * RPC (TODO)
 * Support multiple backends (RDMA, UDP, IGMP, ...)
-* Compression (WIP)
 
 ## API TODO
 
@@ -46,3 +46,10 @@ data1, data2 = a.receive(), b.receive()
 * Add support for list of sources in receive()
 * Add a way to know when the client is connected to the server. (method that returns if connection is successful for client or the number of clients successfully connected to the server)
 * Support data more than 2**32 (maybe?)
+* Add a way to allow users to choose values (ie. compression factor, )
+* Add timeouts on receive()
+
+## Choices
+
+* Serialization
+** Pickle? JSON? MessagePack? Fallbacks from one to another?
