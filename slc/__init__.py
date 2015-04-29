@@ -162,6 +162,7 @@ class Socket:
         self.port = self.server.socket.getsockname()[1]
 
     def _prepareData(self, data, target):
+        # TODO: Use messagepack, fallback on pickle
         # TODO: pickle.HIGHEST_PROTOCOL gives a pretty large output.
         stream = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
         if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
