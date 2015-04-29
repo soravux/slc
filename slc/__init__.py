@@ -48,13 +48,13 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class SocketserverHandler(socketserver.BaseRequestHandler):
     def setup(self):
-        self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IB', 0, self.server.parent_socket.config)]
+        self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IHB', 0, self.server.parent_socket.send_msg_idx[self.client_address], self.server.parent_socket.config)]
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
 
         if self.server.parent_socket.secure:
             our_key = pickle.dumps(security.getOurPublicKey())
-            data_size = struct.pack('!I', len(our_key))
+            data_size = struct.pack('!IH', len(our_key), self.server.parent_socket.recv_msg_idx[self.client_address])
             self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
 
         self.header_received = False
@@ -103,6 +103,8 @@ class Socket:
         self.buffer = 4096
         self.sockets = {}
         self.sockets_config = defaultdict(int)
+        self.send_msg_idx = defaultdict(int)
+        self.recv_msg_idx = defaultdict(int)
         self.server = None
         self.poll_delay = 0.1
         self.data_to_send = defaultdict(list)
@@ -117,7 +119,7 @@ class Socket:
         if self.secure:
             self.crypto_boxes = {}
 
-    def connect(self, port, address='127.0.0.1', source_address=None):
+    def connect(self, port, timeout=-1, address='127.0.0.1', source_address=None):
         """Act as a client"""
         self.state = "client"
         self.target_addresses.append((address, port))
@@ -131,11 +133,13 @@ class Socket:
         self.thread.daemon = True
         self.thread.start()
 
-        # TODO: Launch a new thread to do that
-        self.receive(source=target) # Get the header
-        if self.secure:
-            remote_key = self.receive(source=target) # Get the remote key
-            self.crypto_boxes[target] = security.getBox(remote_key, target)
+        if timeout == -1:
+            self.receive(source=target) # Get the header
+            if self.secure:
+                remote_key = self.receive(source=target) # Get the remote key
+                self.crypto_boxes[target] = security.getBox(remote_key, target)
+        else:
+            raise NotImplementedError("Asynchronous connection feature to come...")
 
     def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
@@ -171,37 +175,41 @@ class Socket:
         targets = self.data_to_send.keys() if not target else [target]
         for key in targets:
             data_serialized = self._prepareData(data, key)
-            data_size = struct.pack('!I', len(data_serialized))
+            data_header = struct.pack('!IH', len(data_serialized), self.send_msg_idx[key])
             self.lock.acquire()
-            self.data_to_send[key].append(data_size + data_serialized)
+            self.send_msg_idx[key] += 1
+            self.data_to_send[key].append(data_header + data_serialized)
             self.lock.release()
 
     def receive(self, source=None, blocking=True, _locks=True):
         """Receive data from the peer."""
         data_to_return = None
-        config_header_size = 5
+        config_size = 6
+        config_header_size = config_size + 1
         targets = self.data_received.keys() if source is None else [source]
         while True:
             if _locks:
                 self.lock.acquire()
             for target in targets:
                 try:
-                    data_size = struct.unpack('!I', self.data_received[target][:4])[0]
+                    data_size, msg_idx = struct.unpack('!IH', self.data_received[target][:config_size])[0:2]
                 except struct.error as e:
                     continue
                 if data_size == 0 and len(self.data_received[target]) >= config_header_size:
                     # data_size == 0 means header
-                    preliminary_config = struct.unpack('!B', self.data_received[target][4:config_header_size])[0]
+                    preliminary_config = struct.unpack('!B', self.data_received[target][config_size:config_header_size])[0]
                     assert preliminary_config == self.config, "Both sockets must have the same configuration."
+                    self.recv_msg_idx[target] = msg_idx
                     self.data_received[target] = self.data_received[target][config_header_size:]
                     self.sockets_config[target] = preliminary_config
                     if _locks:
                         self.lock.release()
                     return True # Move that and the previous if elsewhere?
-                elif len(self.data_received[target]) - 4 >= data_size:
-                    data_to_return = self.data_received[target][4:data_size + 4]
+                elif len(self.data_received[target]) - config_size >= data_size:
+                    self.recv_msg_idx[target] = msg_idx
+                    data_to_return = self.data_received[target][config_size:data_size + config_size]
                     msg_source = target
-                    self.data_received[target] = self.data_received[target][data_size + 4:]
+                    self.data_received[target] = self.data_received[target][data_size + config_size:]
                     break
             else:
                 if _locks:
@@ -259,11 +267,11 @@ class Socket:
 
                     # Send SLC header
                     self.lock.acquire()
-                    self.data_to_send[target].insert(0, struct.pack('!IB', 0, self.config))
+                    self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.send_msg_idx[target], self.config))
 
                     if self.secure:
                         our_key = pickle.dumps(security.getOurPublicKey())
-                        data_size = struct.pack('!I', len(our_key))
+                        data_size = struct.pack('!IH', len(our_key), self.send_msg_idx[target])
                         self.data_to_send[target].insert(1, data_size + our_key)
                     self.lock.release()
 
