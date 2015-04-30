@@ -10,12 +10,14 @@ data = [
     b'Not all those who wander are lost.',
     b'Time is a drug. Too much of it kills you.',
     'The mirror does not reflect evil, but creates it.',
-    15,
+    42,
 ]
 
 
 second_data = [
     b'Time is a drug. Too much of it kills you.',
+    123,
+    'The mirror does not reflect evil, but creates it.',
 ]
 
 
@@ -135,6 +137,26 @@ def test_SendMultipleData(data_in1, data_in2):
 
     assert data_in1 == data_out1
     assert data_in2 == data_out2
+
+    a.shutdown(); b.shutdown()
+
+
+def test_SendMultipleData():
+    a = Socket()
+    b = Socket()
+    a.listen()
+    b.connect(a.port)
+
+    for y in range(10):
+        for x in data:
+            b.send(x)
+
+    for y in range(10):
+        for x in data:
+            data_out1, data_out2 = a.receive(), a.receive()
+
+            assert x == data_out1
+            assert x == data_out2
 
     a.shutdown(); b.shutdown()
 

@@ -51,11 +51,13 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IHB', 0, self.server.parent_socket.send_msg_idx[self.client_address], self.server.parent_socket.config)]
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
+        self.server.parent_socket.send_msg_idx[self.client_address] = 2
 
         if self.server.parent_socket.secure:
             our_key = pickle.dumps(security.getOurPublicKey())
             data_size = struct.pack('!IH', len(our_key), self.server.parent_socket.recv_msg_idx[self.client_address])
             self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
+            self.server.parent_socket.send_msg_idx[self.client_address] = 3
 
         self.header_received = False
 
@@ -66,7 +68,8 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                 for data in self.server.parent_socket.data_to_send[self.client_address]:
                     self.request.sendall(data)
 
-                self.server.parent_socket.data_to_send[self.client_address] = []
+                self.server.parent_socket.data_awaiting[self.client_address].extend(self.server.parent_socket.data_to_send[self.client_address])
+                self.server.parent_socket.data_to_send[self.client_address][:] = []
                 self.server.parent_socket.lock.release()
 
             self.server.parent_socket.lock.acquire()
@@ -108,6 +111,7 @@ class Socket:
         self.server = None
         self.poll_delay = 0.1
         self.data_to_send = defaultdict(list)
+        self.data_awaiting = defaultdict(list)
         self.data_received = defaultdict(bytearray)
         self.target_addresses = []
         self.source_addresses = []
@@ -192,10 +196,15 @@ class Socket:
             if _locks:
                 self.lock.acquire()
             for target in targets:
+                send_idx = self.send_msg_idx[target]
+                len_sent = len(self.data_to_send[target])
+                len_buffer = len(self.data_awaiting[target])
+
                 try:
                     data_size, msg_idx = struct.unpack('!IH', self.data_received[target][:config_size])[0:2]
                 except struct.error as e:
                     continue
+
                 if data_size == 0 and len(self.data_received[target]) >= config_header_size:
                     # data_size == 0 means header
                     preliminary_config = struct.unpack('!B', self.data_received[target][config_size:config_header_size])[0]
@@ -203,14 +212,27 @@ class Socket:
                     self.recv_msg_idx[target] = msg_idx
                     self.data_received[target] = self.data_received[target][config_header_size:]
                     self.sockets_config[target] = preliminary_config
+                    # Send missed packets
+                    data_waiting_begin = send_idx - len_sent - len_buffer
+                    [...]
                     if _locks:
                         self.lock.release()
                     return True # Move that and the previous if elsewhere?
+                elif data_size == 1:
+                    assert send_idx - len_sent - len_buffer == msg_idx
+                    try:
+                        self.data_awaiting[target].pop(0)
+                    except IndexError:
+                        # It is the public encryption key (not in data_awaiting)
+                        pass
+                    self.data_received[target] = self.data_received[target][config_size:]
                 elif len(self.data_received[target]) - config_size >= data_size:
                     self.recv_msg_idx[target] = msg_idx
                     data_to_return = self.data_received[target][config_size:data_size + config_size]
                     msg_source = target
                     self.data_received[target] = self.data_received[target][data_size + config_size:]
+                    # Send ack packet
+                    self.data_to_send[target].append(struct.pack('!IH', 1, msg_idx))
                     break
             else:
                 if _locks:
@@ -269,14 +291,15 @@ class Socket:
                     # Send SLC header
                     self.lock.acquire()
                     self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.send_msg_idx[target], self.config))
+                    self.send_msg_idx[target] = 2
 
                     if self.secure:
                         our_key = pickle.dumps(security.getOurPublicKey())
                         data_size = struct.pack('!IH', len(our_key), self.send_msg_idx[target])
                         self.data_to_send[target].insert(1, data_size + our_key)
+                        self.send_msg_idx[target] = 3
                     self.lock.release()
 
-            # TODO: Delete one by one to increase performance on large amount of data?
             for target, socket_ in self.sockets.items():
                 # Check if socket is still alive
                 try:
@@ -294,7 +317,7 @@ class Socket:
                     self.lock.acquire()
                     for data in self.data_to_send[target]:
                         res = socket_.sendall(data)
-
+                    self.data_awaiting[target].extend(self.data_to_send[target])
                     self.data_to_send[target][:] = []
                     self.lock.release()
 
