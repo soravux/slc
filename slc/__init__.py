@@ -11,7 +11,7 @@ import pickle
 import zlib
 from collections import defaultdict
 
-from . import security
+from . import security, minusconf
 
 
 def initLogging(stream=None):
@@ -35,6 +35,13 @@ class SOCKET_CONFIG:
 
 class ConnectionError(Exception):
     pass
+
+
+def _print_discovery_error(seeker, opposite, error_str):
+    sys.stderr.write("Error from {opposite}: {error_str}\n".format(
+        opposite=opposite,
+        error_str=error_str,
+    ))
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -164,6 +171,23 @@ class Socket:
         self.thread.start()
 
         self.port = self.server.socket.getsockname()[1]
+
+    def advertise(self, stype, sname, advertisername, location=""):
+        """Advertise the current server on the network"""
+        # TODO: ports can be comma separated
+        assert self.state == 'server'
+        service = minusconf.Service(stype, self.port, sname, location)
+        advertiser = minusconf.ThreadAdvertiser([service], advertisername)
+        advertiser.start()
+        return advertiser
+
+
+
+    def discover(self, stype, sname, advertisername=""):
+        se = minusconf.Seeker(stype=stype, aname=advertisername, sname=sname,
+                              error_callback=_print_discovery_error)
+        se.run()
+        return se.results
 
     def _prepareData(self, data, target):
         # TODO: Use messagepack, fallback on pickle
