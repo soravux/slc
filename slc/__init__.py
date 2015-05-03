@@ -55,6 +55,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class SocketserverHandler(socketserver.BaseRequestHandler):
     def setup(self):
+        self.server.parent_socket.target_addresses.append(self.client_address)
         self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IHB', 0, self.server.parent_socket.send_msg_idx[self.client_address], self.server.parent_socket.config)]
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
@@ -100,6 +101,10 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         try:
             self.server.parent_socket.data_to_send.pop(self)
         except KeyError:
+            pass
+        try:
+            self.server.parent_socket.target_addresses.remove(self.client_address)
+        except ValueError:
             pass
 
 
@@ -200,13 +205,26 @@ class Socket:
 
     def send(self, data, target=None):
         """Send data to the peer."""
-        targets = self.data_to_send.keys() if not target else [target]
-        for key in targets:
-            data_serialized = self._prepareData(data, key)
-            data_header = struct.pack('!IH', len(data_serialized), self.send_msg_idx[key])
+        if target is None:
+            targets = self.data_to_send.keys()
+        # TODO: Improve this condition to check if source is a list of targets
+        elif '__iter__' in dir(target) and type(target[0]) is tuple:
+            targets = target
+        else:
+            targets = [target]
+
+        for t in targets:
+            if t not in self.target_addresses:
+                logger = logging.getLogger("slc")
+                logger.error("Target unknown: {}.".format(t))
+                raise Exception("Unknown source")
+
+        for t in targets:
+            data_serialized = self._prepareData(data, t)
+            data_header = struct.pack('!IH', len(data_serialized), self.send_msg_idx[t])
             self.lock.acquire()
-            self.send_msg_idx[key] += 1
-            self.data_to_send[key].append(data_header + data_serialized)
+            self.send_msg_idx[t] += 1
+            self.data_to_send[t].append(data_header + data_serialized)
             self.lock.release()
 
     def receive(self, source=None, timeout=None, _locks=True):
@@ -215,7 +233,21 @@ class Socket:
         data_to_return = None
         config_size = 6
         config_header_size = config_size + 1
-        targets = self.data_received.keys() if source is None else [source]
+
+        if source is None:
+            targets = self.data_received.keys()
+        # TODO: Improve this condition to check if source is a list of targets
+        elif '__iter__' in dir(source) and type(source[0]) is tuple:
+            targets = source
+        else:
+            targets = [source]
+
+        for target in targets:
+            if target not in self.target_addresses:
+                logger = logging.getLogger("slc")
+                logger.error("Target unknown: {}.".format(target))
+                raise Exception("Unknown source")
+
         while True:
             if _locks:
                 self.lock.acquire()
