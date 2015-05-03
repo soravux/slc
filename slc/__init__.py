@@ -338,11 +338,15 @@ class Socket:
                 try:
                     ready_to_read, ready_to_write, in_error = \
                         select.select([socket_,], [socket_,], [], 0)
-                except select.error:
+                except (select.error, ValueError):
                     logger = logging.getLogger("slc")
                     logger.warning("{} disconnected from {}.".format(self.port, target))
-                    socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
-                    socket_.close()
+                    try:
+                        socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                        socket_.close()
+                    except OSError:
+                        # Socket was already closed
+                        pass
                     self.lock.acquire()
                     self.sockets.pop(target)
                     self.lock.release()

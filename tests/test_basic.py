@@ -1,5 +1,6 @@
 import time
 import threading
+import struct
 
 import pytest
 
@@ -191,9 +192,20 @@ def test_disconnect():
     a.listen()
     b.connect(a.port)
 
-    a.send(1)
+    target = ('127.0.0.1', a.port)
+    sock = b.sockets[target]
+
+    data_serialized = b._prepareData(1, target)
+    data_header = struct.pack('!IH', len(data_serialized), b.send_msg_idx[target])
+    b.send_msg_idx[target] += 1
+
+    sock.shutdown(2)
+    sock.close()
+
+    b.data_awaiting[target].append(data_header + data_serialized)
+
     data_out = b.receive()
-    assert data_in == data_out
+    assert data_out == 1
 
     a.shutdown(); b.shutdown()
 
