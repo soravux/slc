@@ -205,13 +205,57 @@ def test_disconnect():
     b.data_awaiting[target].append(data_header + data_serialized)
 
     data_out = b.receive()
-    assert data_out == 1
+    assert data_out == data_in
 
     a.shutdown(); b.shutdown()
 
 
+def test_multipleTargets():
+    raise NotImplementedError()
+
+
+def test_singleTarget():
+    raise NotImplementedError()
+
+
 def test_wrongTarget():
     raise NotImplementedError()
+    #a = Socket()
+    #a.connect(8080, "127.1.2.3")
+    #time.sleep(2)
+
+
+def test_simultaneousListenConnect():
+    raise NotImplementedError()
+
+
+def test_multipleListen():
+    a = Socket()
+    b = Socket()
+
+    a.listen(12340)
+    a.listen(12341)
+    b.connect(12340)
+    b.connect(12341)
+
+    data_in = "test data"
+    b.send(data_in)
+    data_out1, data_out2 = a.receive(), a.receive()
+    assert data_in == data_out1
+    assert data_in == data_out2
+
+
+def test_asynchronousConnect():
+    a = Socket()
+    b = Socket()
+
+    a.listen()
+    b.connect(a.port, timeout=0)
+
+    data_in = "test data"
+    b.send(data_in)
+    data_out = a.receive()
+    assert data_in == data_out
 
 
 def test_discover():

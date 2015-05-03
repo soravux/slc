@@ -159,7 +159,7 @@ class Socket:
             self.secure and not target in self.crypto_boxes
         )
         while is_not_ready():
-            if timeout is not None and ts - ts_begin > timeout:
+            if timeout is not None and time.time() - ts_begin > timeout:
                 break
             time.sleep(0.1) # Replace by select
 
