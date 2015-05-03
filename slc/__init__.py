@@ -209,7 +209,7 @@ class Socket:
             self.data_to_send[key].append(data_header + data_serialized)
             self.lock.release()
 
-    def receive(self, source=None, timeout=True, _locks=True):
+    def receive(self, source=None, timeout=None, _locks=True):
         """Receive data from the peer."""
         ts_begin = time.time()
         data_to_return = None
@@ -271,7 +271,7 @@ class Socket:
                 time.sleep(self.poll_delay) # TODO: Replace by select
 
                 ts = time.time()
-                if ts - ts_begin < timeout or timeout == -1:
+                if timeout == None or ts - ts_begin < timeout:
                     continue
                 else:
                     break
