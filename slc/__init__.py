@@ -136,7 +136,7 @@ class Socket:
         if self.secure:
             self.crypto_boxes = {}
 
-    def connect(self, port, timeout=-1, address='127.0.0.1', source_address=None):
+    def connect(self, port, address='127.0.0.1', timeout=None, source_address=None):
         """Act as a client"""
         self.state |= set(("client",))
         self.target_addresses.append((address, port))
@@ -151,7 +151,7 @@ class Socket:
             self.client_thread.daemon = True
             self.client_thread.start()
 
-        if timeout == -1:
+        if timeout is None:
             self.receive(source=target) # Get the header
             if self.secure:
                 remote_key = self.receive(source=target) # Get the remote key
@@ -348,9 +348,14 @@ class Socket:
         while 'client' in self.state:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
-                    self.sockets[target] = socket.create_connection(target,
-                                                                    timeout=5,
-                                                                    source_address=self.source_addresses[idx])
+                    try:
+                        self.sockets[target] = socket.create_connection(target,
+                                                                        timeout=5,
+                                                                        source_address=self.source_addresses[idx])
+                    except ConnectionRefusedError as e:
+                        logger = logging.getLogger("slc")
+                        logger.warning("Could not connect to: {}.\n{}".format(target, e))
+                        continue
                     self.sockets[target].setblocking(0)
 
                     # Send SLC header
