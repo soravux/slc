@@ -318,7 +318,7 @@ class Socket:
         if data_to_return:
             if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED and msg_source in self.crypto_boxes:
                 data_to_return = self.crypto_boxes[msg_source].decrypt(bytes(data_to_return))
-            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
+            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED and (not self.secure or msg_source in self.crypto_boxes):
                 data_to_return = zlib.decompress(data_to_return)
                 
             return pickle.loads(data_to_return)
