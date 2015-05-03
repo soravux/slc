@@ -109,7 +109,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
 
 class Socket:
-    def __init__(self, secure=False, compressed=False, type_="tcp"):
+    def __init__(self, secure=False, compress=False, type_="tcp"):
         """Builds a new SLC socket."""
         self.type_ = type_
         self.client_thread = None
@@ -131,7 +131,7 @@ class Socket:
         self.source_addresses = []
         self.port = None
         self.secure = secure * SOCKET_CONFIG.ENCRYPTED
-        self.compressed = compressed * SOCKET_CONFIG.COMPRESSED
+        self.compressed = compress * SOCKET_CONFIG.COMPRESSED
         self.config = self.secure | self.compressed
 
         if self.secure:

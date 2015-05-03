@@ -186,6 +186,19 @@ def test_Security(data_in):
     assert data_out == data_in
 
 
+@pytest.mark.parametrize("data_in", data)
+def test_compression(data_in):
+    a = Socket(compress=True)
+    b = Socket(compress=True)
+
+    a.listen()
+    b.connect(a.port)
+
+    b.send(data_in)
+    data_out = a.receive()
+    assert data_out == data_in
+
+
 def test_disconnect():
     a = Socket()
     b = Socket()
