@@ -32,22 +32,17 @@ data1, data2 = a.receive(), b.receive()
 * Allows one-to-one and one-to-many (publisher - subscriber) communications
 * Compression
 * Security
-* Auto-reconnection on connection lost (TODO)
-* Zero Configuration, service discovery (TODO)
+* Auto-reconnection on connection lost, no message lost
+* Zero Configuration, service discovery
+* Support multiple backends (RDMA, UDP, IGMP, ...) (TODO)
 * Throttling (TODO)
-* RPC (TODO)
-* Support multiple backends (RDMA, UDP, IGMP, ...)
 
 ## API TODO
 
-* Allow multiple listen from a single socket
-* Allow socket to listen and connect at the same time
 * Add source of message in receive()
-* Add support for list of sources in receive()
-* Add a way to know when the client is connected to the server. (method that returns if connection is successful for client or the number of clients successfully connected to the server)
-* Support data more than 2**32 (maybe?)
-* Add a way to allow users to choose values (ie. compression factor, )
-* Add timeouts on receive()
+* Add support for asynchronous connection
+* Support data more than 2**32
+* Add a way to allow users to choose advanced values (ie. compression level, encryption algorithm)
 
 ## Choices
 
