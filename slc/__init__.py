@@ -86,10 +86,10 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                 pass
 
             if not self.header_received:
-                self.header_received = self.server.parent_socket.receive(source=self.client_address, blocking=False, _locks=False)
+                self.header_received = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
 
             if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
-                source_key = self.server.parent_socket.receive(source=self.client_address, blocking=False, _locks=False)
+                source_key = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
                 if source_key:
                     self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
             self.server.parent_socket.lock.release()
@@ -107,15 +107,16 @@ class Socket:
     def __init__(self, secure=False, compressed=False, type_="tcp"):
         """Builds a new SLC socket."""
         self.type_ = type_
-        self.thread = None
+        self.client_thread = None
+        self.server_threads = []
         self.lock = threading.Lock()
-        self.state = None
+        self.state = set()
         self.buffer = 4096
         self.sockets = {}
         self.sockets_config = defaultdict(int)
         self.send_msg_idx = defaultdict(int)
         self.recv_msg_idx = defaultdict(int)
-        self.server = None
+        self.servers = []
         self.poll_delay = 0.1
         self.data_to_send = defaultdict(list)
         self.data_awaiting = defaultdict(list)
@@ -132,7 +133,7 @@ class Socket:
 
     def connect(self, port, timeout=-1, address='127.0.0.1', source_address=None):
         """Act as a client"""
-        self.state = "client"
+        self.state |= set(("client",))
         self.target_addresses.append((address, port))
         self.source_addresses.append(source_address)
         target = (address, port)
@@ -140,9 +141,10 @@ class Socket:
         # Send configuration
         self.data_to_send[target] = []
 
-        self.thread = threading.Thread(target=self._clientHandle)
-        self.thread.daemon = True
-        self.thread.start()
+        if not self.client_thread:
+            self.client_thread = threading.Thread(target=self._clientHandle)
+            self.client_thread.daemon = True
+            self.client_thread.start()
 
         if timeout == -1:
             self.receive(source=target) # Get the header
@@ -154,34 +156,31 @@ class Socket:
 
     def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
-        self.shutdown() # TODO: Needed?
-        self.state = 'server'
+        self.state |= set(('server',))
 
         if self.secure:
             security.initializeSecurity()
 
-        self.server = ThreadedTCPServer(
+        self.servers.append(ThreadedTCPServer(
             self,
             (address, port),
             SocketserverHandler,
-        )
-        self.server.shutdown_requested_why_is_this_variable_mangled_by_default = False
-        self.thread = threading.Thread(target=self.server.serve_forever)
-        self.thread.daemon = True
-        self.thread.start()
+        ))
+        self.servers[-1].shutdown_requested_why_is_this_variable_mangled_by_default = False
+        self.server_threads.append(threading.Thread(target=self.servers[-1].serve_forever))
+        self.server_threads[-1].daemon = True
+        self.server_threads[-1].start()
 
-        self.port = self.server.socket.getsockname()[1]
+        self.port = self.servers[-1].socket.getsockname()[1]
 
     def advertise(self, stype, sname, advertisername, location=""):
         """Advertise the current server on the network"""
         # TODO: ports can be comma separated
-        assert self.state == 'server'
+        assert 'server' in self.state
         service = minusconf.Service(stype, self.port, sname, location)
         advertiser = minusconf.ThreadAdvertiser([service], advertisername)
         advertiser.start()
         return advertiser
-
-
 
     def discover(self, stype, sname, advertisername=""):
         se = minusconf.Seeker(stype=stype, aname=advertisername, sname=sname,
@@ -210,8 +209,9 @@ class Socket:
             self.data_to_send[key].append(data_header + data_serialized)
             self.lock.release()
 
-    def receive(self, source=None, blocking=True, _locks=True):
+    def receive(self, source=None, timeout=True, _locks=True):
         """Receive data from the peer."""
+        ts_begin = time.time()
         data_to_return = None
         config_size = 6
         config_header_size = config_size + 1
@@ -237,32 +237,41 @@ class Socket:
                     self.data_received[target] = self.data_received[target][config_header_size:]
                     self.sockets_config[target] = preliminary_config
                     # Send missed packets
-                    data_waiting_begin = send_idx - len_sent - len_buffer
-                    [...]
+                    data_waiting_begin = (send_idx - len_sent - len_buffer) - msg_idx
+                    del self.data_awaiting[target][:data_waiting_begin]
+                    for x in self.data_awaiting[target]:
+                        pass
+                        #self.send(x, target=target)
+
                     if _locks:
                         self.lock.release()
                     return True # Move that and the previous if elsewhere?
                 elif data_size == 1:
-                    assert send_idx - len_sent - len_buffer == msg_idx
+                    assert send_idx - len_sent - len_buffer - 1 == msg_idx
                     try:
                         self.data_awaiting[target].pop(0)
                     except IndexError:
                         # It is the public encryption key (not in data_awaiting)
                         pass
                     self.data_received[target] = self.data_received[target][config_size:]
+                    continue
+
                 elif len(self.data_received[target]) - config_size >= data_size:
                     self.recv_msg_idx[target] = msg_idx
                     data_to_return = self.data_received[target][config_size:data_size + config_size]
                     msg_source = target
                     self.data_received[target] = self.data_received[target][data_size + config_size:]
+
                     # Send ack packet
                     self.data_to_send[target].append(struct.pack('!IH', 1, msg_idx))
                     break
             else:
                 if _locks:
                     self.lock.release()
-                time.sleep(self.poll_delay)
-                if blocking:
+                time.sleep(self.poll_delay) # TODO: Replace by select
+
+                ts = time.time()
+                if ts - ts_begin < timeout or timeout == -1:
                     continue
                 else:
                     break
@@ -279,16 +288,16 @@ class Socket:
             return pickle.loads(data_to_return)
 
     def shutdown(self):
-        self.state = None
+        self.state = set()
 
         sockets_to_clean = list(self.sockets.values())
-        if self.server:
-            sockets_to_clean.append(self.server.socket)
-            self.server.shutdown_requested_why_is_this_variable_mangled_by_default = True
-            self.server.shutdown()
+        for server in self.servers:
+            sockets_to_clean.append(server.socket)
+            server.shutdown_requested_why_is_this_variable_mangled_by_default = True
+            server.shutdown()
 
-        if self.thread and self.thread.is_alive():
-            self.thread.join()
+        if self.client_thread and self.client_thread.is_alive():
+            self.client_thread.join()
 
         # TODO: Hum, analyze the impact of this
         for socket_ in sockets_to_clean:
@@ -304,7 +313,7 @@ class Socket:
 
     def _clientHandle(self):
         """TODO: one socket per thread to prevent create_connection delays?"""
-        while self.state == 'client':
+        while 'client' in self.state:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
                     self.sockets[target] = socket.create_connection(target,
@@ -330,6 +339,8 @@ class Socket:
                     ready_to_read, ready_to_write, in_error = \
                         select.select([socket_,], [socket_,], [], 0)
                 except select.error:
+                    logger = logging.getLogger("slc")
+                    logger.warning("{} disconnected from {}.".format(self.port, target))
                     socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
                     socket_.close()
                     self.lock.acquire()

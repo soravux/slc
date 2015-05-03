@@ -76,8 +76,6 @@ def test_SendToSingleClient(data_in):
     a.listen()
     b.connect(a.port)
 
-    time.sleep(0.1) # Wait for the server to receive the connection from the client
-
     a.send(data_in)
     data_out = b.receive()
     assert data_in == data_out
@@ -96,7 +94,6 @@ def test_SendToAllClients(data_in):
     b.connect(a.port)
     c.connect(a.port)
 
-    time.sleep(0.1)
     a.send(data_in)
     data_out1, data_out2 = b.receive(), c.receive()
     assert data_in == data_out1 == data_out2
@@ -115,7 +112,6 @@ def test_SendToAllServers(data_in):
     c.connect(a.port)
     c.connect(b.port)
 
-    time.sleep(0.1)
     c.send(data_in)
     data_out1, data_out2 = a.receive(), b.receive()
     assert data_in == data_out1
@@ -153,10 +149,8 @@ def test_SendMultipleData():
 
     for y in range(10):
         for x in data:
-            data_out1, data_out2 = a.receive(), a.receive()
-
-            assert x == data_out1
-            assert x == data_out2
+            data_out = a.receive()
+            assert x == data_out
 
     a.shutdown(); b.shutdown()
 
@@ -186,12 +180,40 @@ def test_Security(data_in):
     a.listen()
     b.connect(a.port)
 
-    time.sleep(0.1)
-
     b.send(data_in)
     data_out = a.receive()
     assert data_out == data_in
 
 
+def test_disconnect():
+    a = Socket()
+    b = Socket()
+    a.listen()
+    b.connect(a.port)
+
+    a.send(1)
+    data_out = b.receive()
+    assert data_in == data_out
+
+    a.shutdown(); b.shutdown()
+
+
+def test_wrongTarget():
+    raise NotImplementedError()
+
+
+def test_discover():
+    a = Socket()
+    b = Socket()
+    a.listen()
+    a.advertise("test_type", "test_name", "test_advertiser")
+    time.sleep(0.5)
+    res = b.discover("test_type", "test_name")
+    print(res)
+
+# TODO: Add tests for:
+# - Disconnection
+# - Discovery & Advertisement
+
 if __name__ == '__main__':
-    test_Security("test")
+    test_discover() 
