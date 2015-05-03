@@ -118,6 +118,7 @@ class Socket:
         self.state = set()
         self.buffer = 4096
         self.sockets = {}
+        self.client_header_received = defaultdict(bool)
         self.sockets_config = defaultdict(int)
         self.send_msg_idx = defaultdict(int)
         self.recv_msg_idx = defaultdict(int)
@@ -138,6 +139,8 @@ class Socket:
 
     def connect(self, port, address='127.0.0.1', timeout=None, source_address=None):
         """Act as a client"""
+        ts_begin = time.time()
+
         self.state |= set(("client",))
         self.target_addresses.append((address, port))
         self.source_addresses.append(source_address)
@@ -151,13 +154,14 @@ class Socket:
             self.client_thread.daemon = True
             self.client_thread.start()
 
-        if timeout is None:
-            self.receive(source=target) # Get the header
-            if self.secure:
-                remote_key = self.receive(source=target) # Get the remote key
-                self.crypto_boxes[target] = security.getBox(remote_key, target)
-        else:
-            raise NotImplementedError("Asynchronous connection feature to come...")
+
+        is_not_ready = lambda: not self.client_header_received[target] or (
+            self.secure and not target in self.crypto_boxes
+        )
+        while is_not_ready():
+            if timeout is not None and ts - ts_begin > timeout:
+                break
+            time.sleep(0.1) # Replace by select
 
     def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
@@ -392,7 +396,16 @@ class Socket:
                 if self.data_to_send[target]:
                     self.lock.acquire()
                     for data in self.data_to_send[target]:
-                        res = socket_.sendall(data)
+                        try:
+                            res = socket_.sendall(data)
+                        except BrokenPipeError:
+                            try:
+                                socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                                socket_.close()
+                            except OSError:
+                                # Socket was already closed
+                                pass
+                            break
                     self.data_awaiting[target].extend(self.data_to_send[target])
                     self.data_to_send[target][:] = []
                     self.lock.release()
@@ -402,6 +415,15 @@ class Socket:
                     self.data_received[target].extend(socket_.recv(4096))
                 except socket.error:
                     pass
+
+                if not self.client_header_received[target]:
+                    self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
+
+                if self.secure and not target in self.crypto_boxes:
+                    source_key = self.receive(source=target, timeout=0, _locks=False)
+                    if source_key:
+                        self.crypto_boxes[target] = security.getBox(source_key, target)
+
                 self.lock.release()
 
             time.sleep(self.poll_delay) # Replace by select
