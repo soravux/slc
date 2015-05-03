@@ -207,7 +207,7 @@ class Socket:
             stream = self.crypto_boxes[target].encrypt(stream)
         return stream
 
-    def send(self, data, target=None):
+    def send(self, data, target=None, raw=False, _locks=True):
         """Send data to the peer."""
         if target is None:
             targets = self.data_to_send.keys()
@@ -224,12 +224,18 @@ class Socket:
                 raise Exception("Unknown source")
 
         for t in targets:
-            data_serialized = self._prepareData(data, t)
+            if not raw:
+                data_serialized = self._prepareData(data, t)
+            else:
+                data_serialized = data
+
             data_header = struct.pack('!IH', len(data_serialized), self.send_msg_idx[t])
-            self.lock.acquire()
+            if _locks:
+                self.lock.acquire()
             self.send_msg_idx[t] += 1
             self.data_to_send[t].append(data_header + data_serialized)
-            self.lock.release()
+            if _locks:
+                self.lock.release()
 
     def receive(self, source=None, timeout=None, _locks=True):
         """Receive data from the peer."""
@@ -272,12 +278,13 @@ class Socket:
                     self.recv_msg_idx[target] = msg_idx
                     self.data_received[target] = self.data_received[target][config_header_size:]
                     self.sockets_config[target] = preliminary_config
+                    
                     # Send missed packets
                     data_waiting_begin = (send_idx - len_sent - len_buffer) - msg_idx
                     del self.data_awaiting[target][:data_waiting_begin]
                     for x in self.data_awaiting[target]:
-                        pass
-                        #self.send(x, target=target)
+                        self.data_to_send[target].append(x)
+                    del self.data_awaiting[target][:]
 
                     if _locks:
                         self.lock.release()
@@ -361,10 +368,11 @@ class Socket:
                         logger.warning("Could not connect to: {}.\n{}".format(target, e))
                         continue
                     self.sockets[target].setblocking(0)
+                    self.client_header_received[target] = False
 
                     # Send SLC header
                     self.lock.acquire()
-                    self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.send_msg_idx[target], self.config))
+                    self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.recv_msg_idx[target], self.config))
                     self.send_msg_idx[target] = 2
 
                     if self.secure:
@@ -416,6 +424,7 @@ class Socket:
                 except socket.error:
                     pass
 
+                # Receive and process the connection header
                 if not self.client_header_received[target]:
                     self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
 

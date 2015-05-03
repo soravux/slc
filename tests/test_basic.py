@@ -199,16 +199,36 @@ def test_compression(data_in):
     assert data_out == data_in
 
 
+@pytest.mark.parametrize("data_in", data)
+def test_compressionAndSecure(data_in):
+    a = Socket(compress=True, secure=True)
+    b = Socket(compress=True, secure=True)
+
+    a.listen()
+    b.connect(a.port)
+
+    b.send(data_in)
+    data_out = a.receive()
+    assert data_out == data_in
+
+
+def test_wronglyConfiguredSocket():
+    raise NotImplementedError()
+
+
 def test_disconnect():
     a = Socket()
     b = Socket()
     a.listen()
     b.connect(a.port)
 
+    time.sleep(0.1)
+
     target = ('127.0.0.1', a.port)
     sock = b.sockets[target]
+    data_in = 'disconnect test'
 
-    data_serialized = b._prepareData(1, target)
+    data_serialized = b._prepareData(data_in, target)
     data_header = struct.pack('!IH', len(data_serialized), b.send_msg_idx[target])
     b.send_msg_idx[target] += 1
 
@@ -217,7 +237,7 @@ def test_disconnect():
 
     b.data_awaiting[target].append(data_header + data_serialized)
 
-    data_out = b.receive()
+    data_out = a.receive()
     assert data_out == data_in
 
     a.shutdown(); b.shutdown()
