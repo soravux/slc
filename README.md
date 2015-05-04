@@ -48,3 +48,4 @@ data1, data2 = a.receive(), b.receive()
 
 * Serialization
 ** Pickle? JSON? MessagePack? Fallbacks from one to another?
+* Modify select in wait loops to send as soon as data is available to send

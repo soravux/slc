@@ -300,9 +300,6 @@ def test_discover():
     res = b.discover("test_type", "test_name")
     print(res)
 
-# TODO: Add tests for:
-# - Disconnection
-# - Discovery & Advertisement
 
 if __name__ == '__main__':
     test_discover() 

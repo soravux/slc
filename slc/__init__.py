@@ -96,7 +96,10 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                     self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
             self.server.parent_socket.lock.release()
 
-            time.sleep(self.server.parent_socket.poll_delay) # Replace by select
+            try:
+                _, _, _ = select.select([self.request], [], [], self.server.parent_socket.poll_delay)
+            except OSError:
+                pass
 
     def finish(self):
         try:
@@ -323,7 +326,11 @@ class Socket:
             else:
                 if _locks:
                     self.lock.release()
-                time.sleep(self.poll_delay) # TODO: Replace by select
+
+                try:
+                    _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
+                except OSError:
+                    pass
 
                 ts = time.time()
                 if timeout == None or ts - ts_begin < timeout:
@@ -395,57 +402,64 @@ class Socket:
                         self.data_to_send[target].insert(1, data_size + our_key)
                     self.lock.release()
 
-            for target, socket_ in self.sockets.items():
-                # Check if socket is still alive
-                try:
-                    ready_to_read, ready_to_write, in_error = \
-                        select.select([socket_,], [socket_,], [], 0)
-                except (select.error, ValueError):
-                    logger = logging.getLogger("slc")
-                    logger.warning("{} disconnected from {}.".format(self.port, target))
+                sockets_to_remove = []
+                for target, socket_ in self.sockets.items():
+                    # Check if socket is still alive
                     try:
-                        socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
-                        socket_.close()
-                    except OSError:
-                        # Socket was already closed
-                        pass
-                    self.lock.acquire()
-                    self.sockets.pop(target)
-                    self.lock.release()
-                    break
-
-                if self.data_to_send[target]:
-                    self.lock.acquire()
-                    for data in self.data_to_send[target]:
+                        ready_to_read, ready_to_write, in_error = \
+                            select.select([socket_,], [socket_,], [], 0)
+                    except (select.error, ValueError):
+                        logger = logging.getLogger("slc")
+                        logger.warning("{} disconnected from {}.".format(self.port, target))
                         try:
-                            res = socket_.sendall(data)
-                        except BrokenPipeError:
+                            socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                            socket_.close()
+                        except OSError:
+                            # Socket was already closed
+                            pass
+                        sockets_to_remove.append(target)
+                        break
+
+                    if self.data_to_send[target]:
+                        self.lock.acquire()
+                        for data in self.data_to_send[target]:
                             try:
-                                socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
-                                socket_.close()
-                            except OSError:
-                                # Socket was already closed
-                                pass
-                            break
-                    self.data_awaiting[target].extend(self.data_to_send[target])
-                    self.data_to_send[target][:] = []
+                                res = socket_.sendall(data)
+                            except BrokenPipeError:
+                                try:
+                                    socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                                    socket_.close()
+                                except OSError:
+                                    # Socket was already closed
+                                    pass
+                                sockets_to_remove.append(target)
+                                break
+                        else:
+                            self.data_awaiting[target].extend(self.data_to_send[target])
+                            self.data_to_send[target][:] = []
+                        self.lock.release()
+
+                for sock in sockets_to_remove:
+                    self.sockets.pop(sock, None)
+
+                for target, socket_ in self.sockets.items():
+                    self.lock.acquire()
+                    try:
+                        self.data_received[target].extend(socket_.recv(4096))
+                    except socket.error:
+                        pass
+
+                    # Receive and process the connection header
+                    if not self.client_header_received[target]:
+                        self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
+
+                    if self.secure and not target in self.crypto_boxes:
+                        source_key = self.receive(source=target, timeout=0, _locks=False)
+                        if source_key:
+                            self.crypto_boxes[target] = security.getBox(source_key, target)
+
                     self.lock.release()
-
-                self.lock.acquire()
-                try:
-                    self.data_received[target].extend(socket_.recv(4096))
-                except socket.error:
-                    pass
-
-                # Receive and process the connection header
-                if not self.client_header_received[target]:
-                    self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
-
-                if self.secure and not target in self.crypto_boxes:
-                    source_key = self.receive(source=target, timeout=0, _locks=False)
-                    if source_key:
-                        self.crypto_boxes[target] = security.getBox(source_key, target)
-
-                self.lock.release()
-
-            time.sleep(self.poll_delay) # Replace by select
+            try:
+                _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
+            except OSError:
+                pass
