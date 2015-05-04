@@ -41,7 +41,7 @@ data1, data2 = a.receive(), b.receive()
 
 * Add source of message in receive()
 * Add support for asynchronous connection
-* Support data more than 2**32
+* Support data more than 2**32 and more than 2**16 packets
 * Add a way to allow users to choose advanced values (ie. compression level, encryption algorithm)
 
 ## Choices
