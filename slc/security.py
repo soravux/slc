@@ -53,7 +53,7 @@ def getBox(remoteKey, target):
         if key_already_here != remoteKey:
             raise PossibleSecurityBreach('The key sent by the peer is not the '
                                          'same as the one already on the '
-                                         'system')
+                                         'system.')
     else:
         with open(target_key_path, 'wb') as fhdl:
             fhdl.write(remoteKey)

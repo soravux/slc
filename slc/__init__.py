@@ -154,7 +154,6 @@ class Socket:
             self.client_thread.daemon = True
             self.client_thread.start()
 
-
         is_not_ready = lambda: not self.client_header_received[target] or (
             self.secure and not target in self.crypto_boxes
         )
@@ -263,7 +262,7 @@ class Socket:
                 self.lock.acquire()
             for target in targets:
                 send_idx = self.send_msg_idx[target]
-                len_sent = len(self.data_to_send[target])
+                len_send = len(self.data_to_send[target])
                 len_buffer = len(self.data_awaiting[target])
 
                 try:
@@ -280,7 +279,8 @@ class Socket:
                     self.sockets_config[target] = preliminary_config
                     
                     # Send missed packets
-                    data_waiting_begin = (send_idx - len_sent - len_buffer) - msg_idx
+                    data_waiting_begin = (send_idx - len_send - len_buffer) - msg_idx
+                    print(send_idx, len_send, len_buffer, msg_idx)
                     del self.data_awaiting[target][:data_waiting_begin]
                     for x in self.data_awaiting[target]:
                         self.data_to_send[target].append(x)
@@ -355,7 +355,6 @@ class Socket:
             socket_.close()
 
     def _clientHandle(self):
-        """TODO: one socket per thread to prevent create_connection delays?"""
         while 'client' in self.state:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
