@@ -138,6 +138,36 @@ def test_SendMultipleData(data_in1, data_in2):
     a.shutdown(); b.shutdown()
 
 
+def test_SendMultipleDataMultipleClient():
+    a = Socket()
+    b = Socket()
+    c = Socket()
+    d = Socket()
+    e = Socket()
+    a.listen()
+    b.connect(a.port)
+    c.connect(a.port)
+    d.connect(a.port)
+    e.connect(a.port)
+
+    b.send(data[0])
+    data_out = a.receive()
+    assert data_out == data[0]
+
+    c.send(data[1])
+    data_out = a.receive()
+    assert data_out == data[1]
+
+    d.send(data[2])
+    e.send(data[3])
+    data_out1 = a.receive()
+    data_out2 = a.receive()
+    assert data_out1 == data[2]
+    assert data_out2 == data[3]
+
+    a.shutdown(); b.shutdown(); c.shutdown(); d.shutdown(); e.shutdown()
+
+
 def test_SendMultipleData():
     a = Socket()
     b = Socket()
@@ -170,7 +200,7 @@ def test_CreateTwoServersBackToBack():
     data_out = b.receive()
     assert data[0] == data_out
 
-    b.shutdown(); c.shutdown()
+    a.shutdown(); b.shutdown(); c.shutdown()
 
 
 @pytest.mark.parametrize("data_in", data)
@@ -185,6 +215,8 @@ def test_Security(data_in):
     data_out = a.receive()
     assert data_out == data_in
 
+    a.shutdown(); b.shutdown()
+
 
 @pytest.mark.parametrize("data_in", data)
 def test_compression(data_in):
@@ -197,6 +229,8 @@ def test_compression(data_in):
     b.send(data_in)
     data_out = a.receive()
     assert data_out == data_in
+
+    a.shutdown(); b.shutdown()
 
 
 @pytest.mark.parametrize("data_in", data)
@@ -211,9 +245,15 @@ def test_compressionAndSecure(data_in):
     data_out = a.receive()
     assert data_out == data_in
 
+    a.shutdown(); b.shutdown()
+
 
 def test_wronglyConfiguredSocket():
-    raise NotImplementedError()
+    a = Socket(compress=True)
+    b = Socket(compress=False)
+    a.listen()
+    with pytest.raises(AssertionError):
+        b.connect(a.port)
 
 
 def test_disconnect():
@@ -244,7 +284,8 @@ def test_disconnect():
 
 
 def test_multipleTargets():
-    raise NotImplementedError()
+    a = Socket()
+    b = Socket()
 
 
 def test_singleTarget():

@@ -15,6 +15,10 @@ from collections import defaultdict
 from . import security, minusconf
 
 
+#######################################
+# Logging facilities and initialization
+#######################################
+
 def initLogging(stream=None):
     """Initialize the logger. Thanks to snakemq."""
     logger = logging.getLogger("slc")
@@ -27,12 +31,22 @@ def initLogging(stream=None):
 
 initLogging()
 
+#######################################
+# Constants
+#######################################
+
+SER_PICKLE = "TODO"
+INFINITE = "TODO"
+
 
 class SOCKET_CONFIG:
     NORMAL = 0b00000000
     ENCRYPTED = 0b00000001
     COMPRESSED = 0b00000010
 
+#######################################
+# Exceptions
+#######################################
 
 class ConnectionError(Exception):
     pass
@@ -44,6 +58,9 @@ def _print_discovery_error(seeker, opposite, error_str):
         error_str=error_str,
     ))
 
+#######################################
+# Server related classes
+#######################################
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True   # Kills threads on ctrl-c
@@ -111,11 +128,21 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         except ValueError:
             pass
 
+#######################################
+
 
 class Socket:
-    def __init__(self, secure=False, compress=False, type_="tcp"):
-        """Builds a new SLC socket."""
-        self.type_ = type_
+    def __init__(self, encrypt=False, authenticate=False, compress=False,
+                 serdeser=[SER_PICKLE], buffer_max=None, retry_timeout=30,
+                 n_retries=INFINITE, protocol="tcp"):
+        """
+        Builds a new communicator.
+
+        :param encryption:
+        :param authentication:
+        :param compress:
+        """
+        self.protocol = protocol
         self.client_thread = None
         self.server_threads = []
         self.lock = threading.Lock()
@@ -135,11 +162,12 @@ class Socket:
         self.target_addresses = []
         self.source_addresses = []
         self.port = None
-        self.secure = secure * SOCKET_CONFIG.ENCRYPTED
+        self.encrypt = encrypt * SOCKET_CONFIG.ENCRYPTED
+        self.authenticate = authenticate * SOCKET_CONFIG.ENCRYPTED
         self.compressed = compress * SOCKET_CONFIG.COMPRESSED
-        self.config = self.secure | self.compressed
+        self.config = self.encrypt | self.compressed
 
-        if self.secure:
+        if self.encrypt:
             self.crypto_boxes = {}
 
     def connect(self, port, address='127.0.0.1', timeout=None, source_address=None):
@@ -160,18 +188,19 @@ class Socket:
             self.client_thread.start()
 
         is_not_ready = lambda: not self.client_header_received[target] or (
-            self.secure and not target in self.crypto_boxes
+            self.encrypt and not target in self.crypto_boxes
         )
         while is_not_ready():
             if timeout is not None and time.time() - ts_begin > timeout:
                 break
             time.sleep(0.1) # Replace by select
+            assert self.client_thread.is_alive(), "Client thread terminated unexpectedly."
 
     def listen(self, port=0, address='0.0.0.0'):
         """Act as a server"""
         self.state |= set(('server',))
 
-        if self.secure:
+        if self.encrypt:
             security.initializeSecurity()
 
         self.servers.append(ThreadedTCPServer(
@@ -212,7 +241,21 @@ class Socket:
         return stream
 
     def send(self, data, target=None, raw=False, _locks=True):
-        """Send data to the peer."""
+        """send(self, data, target=None, raw=False)
+        Send data to peer(s).
+
+        :param data: Data to send. Can be any type serializable by the chosen
+            serialization protocol if `raw` is `None`. If `raw` is `True`, data
+            must have a file-like interface, such as a bytes type.
+        :param target: Target peer to send the data to. If `None`, send to
+            all peers. If set to a tuple of (host, port), send only to this
+            peer. If set to a list of tuples, only send to these particular
+            targets.
+        :param raw: If the data must be serialized or not before sending.
+
+        :returns: Message ID. Can be used to know either this data have been
+            acknowledged by its recipient(s).
+        """
         if target is None:
             targets = self.data_to_send.keys()
         # TODO: Improve this condition to check if source is a list of targets
@@ -242,7 +285,17 @@ class Socket:
                 self.lock.release()
 
     def receive(self, source=None, timeout=None, _locks=True):
-        """Receive data from the peer."""
+        """receive(self, source=None, timeout=None)
+        Receive data from the peer.
+
+        :param source: Tuple (host, port) from which to receive from.
+        :param timeout: Maximum time to wait. None means blocking. 0 means
+            non-blocking. Any strictly positive number means to wait for this
+            maximum time in seconds to wait. An error is raised in the latter
+            case if no data is received.
+
+        :returns: src, obj
+        """
         ts_begin = time.time()
         data_to_return = None
         config_size = 6
@@ -288,7 +341,7 @@ class Socket:
                     for x in self.data_awaiting[target]:
                         # Do not resend header
                         resend_data_size, resend_msg_idx = struct.unpack('!IH', x[:config_size])
-                        if resend_data_size != 0 and (resend_msg_idx > 1 or not self.secure):
+                        if resend_data_size != 0 and (resend_msg_idx > 1 or not self.encrypt):
                             logger = logging.getLogger("slc")
                             logger.warning('Sending a message again...')
                             self.data_to_send[target].append(x)
@@ -332,6 +385,12 @@ class Socket:
                 except OSError:
                     pass
 
+                if 'client' in self.state:
+                    assert self.client_thread, "Client thread could not be launched unexpectedly."
+                    assert self.client_thread.is_alive(), "Client thread terminated unexpectedly."
+                for thread in self.server_threads:
+                    assert thread.is_alive(), "Server thread terminated unexpectedly."
+
                 ts = time.time()
                 if timeout == None or ts - ts_begin < timeout:
                     continue
@@ -344,7 +403,7 @@ class Socket:
         if data_to_return:
             if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED and msg_source in self.crypto_boxes:
                 data_to_return = self.crypto_boxes[msg_source].decrypt(bytes(data_to_return))
-            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED and (not self.secure or msg_source in self.crypto_boxes):
+            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED and (not self.encrypt or msg_source in self.crypto_boxes):
                 data_to_return = zlib.decompress(data_to_return)
                 
             return pickle.loads(data_to_return)
@@ -396,7 +455,7 @@ class Socket:
                     self.lock.acquire()
                     self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.recv_msg_idx[target], self.config))
 
-                    if self.secure:
+                    if self.encrypt:
                         our_key = pickle.dumps(security.getOurPublicKey())
                         data_size = struct.pack('!IH', len(our_key), 1)
                         self.data_to_send[target].insert(1, data_size + our_key)
@@ -453,7 +512,7 @@ class Socket:
                     if not self.client_header_received[target]:
                         self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
 
-                    if self.secure and not target in self.crypto_boxes:
+                    if self.encrypt and not target in self.crypto_boxes:
                         source_key = self.receive(source=target, timeout=0, _locks=False)
                         if source_key:
                             self.crypto_boxes[target] = security.getBox(source_key, target)
