@@ -10,7 +10,7 @@ import socketserver
 import pickle
 import zlib
 from functools import partial
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 from . import security, minusconf
 
@@ -35,14 +35,31 @@ initLogging()
 # Constants
 #######################################
 
-SER_PICKLE = "TODO"
-INFINITE = "TODO"
+SERDESER = namedtuple("serdeser", "protocol, version, ser, deser")
+"""Namedtuple specifying a de/serialization protocol.
+
+:param protocol: Protocol name.
+:param version: Protocol version.
+:param ser: Callable that performs the serialization. Use a `partial` to 
+    specify the function arguments.
+:param deser: Callable that performs the deserialization.
+"""
+
+pickser = partial(pickle.dumps, protocol=pickle.HIGHEST_PROTOCOL)
+SER_PICKLE = SERDESER(protocol="pickle", version=pickle.HIGHEST_PROTOCOL,
+                      ser=pickser, deser=pickle.loads)
+"""Pickle de/serialization using the highest protocol available."""
 
 
 class SOCKET_CONFIG:
     NORMAL = 0b00000000
     ENCRYPTED = 0b00000001
     COMPRESSED = 0b00000010
+
+
+ALL = None
+INFINITE = None
+
 
 #######################################
 # Exceptions
@@ -79,7 +96,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
 
-        if self.server.parent_socket.secure:
+        if self.server.parent_socket.encrypt:
             our_key = pickle.dumps(security.getOurPublicKey())
             data_size = struct.pack('!IH', len(our_key), 1)
             self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
@@ -107,7 +124,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
             if not self.header_received:
                 self.header_received = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
 
-            if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
+            if self.server.parent_socket.encrypt and not self.client_address in self.server.parent_socket.crypto_boxes:
                 source_key = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
                 if source_key:
                     self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
@@ -132,16 +149,31 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
 
 class Socket:
-    def __init__(self, encrypt=False, authenticate=False, compress=False,
-                 serdeser=[SER_PICKLE], buffer_max=None, retry_timeout=30,
-                 n_retries=INFINITE, protocol="tcp"):
-        """
+    """
         Builds a new communicator.
 
-        :param encryption:
-        :param authentication:
-        :param compress:
-        """
+        :param encryption: Use encryption. This makes the messages readable
+            only by the target. It does not ensure that the message is coming
+            from the right peer, though.
+        :param authentication: Use authentication. This makes the messages
+            impossible to modify by a tier and ensure the authenticity of the
+            sender.
+        :param compress: Performs compression on the data (TODO: Add namedtuple
+            to specify compression)
+        :param serdeser: namedtuple representing the de/serialization protocol.
+            see slc.SERDESER
+        :param buffer_max: Maximum size of the sending data buffer. Past this size,
+            sending data will block.
+        :param retry_timeout: Timeout in seconds before a connection attempt is
+            considered failed.
+        :param n_retries: Number of retries before the socket is considered
+            disconnected. After this quantity of retries, subsequent operations
+            on the communicator will raise an exception.
+        :param protocol: Underlying protocol to use.
+    """
+    def __init__(self, encrypt=False, authenticate=False, compress=False,
+                 serdeser=[SER_PICKLE], buffer_max=INFINITE, retry_timeout=30,
+                 n_retries=INFINITE, protocol="tcp"):
         self.protocol = protocol
         self.client_thread = None
         self.server_threads = []
@@ -170,14 +202,25 @@ class Socket:
         if self.encrypt:
             self.crypto_boxes = {}
 
-    def connect(self, port, address='127.0.0.1', timeout=None, source_address=None):
-        """Act as a client"""
+    def connect(self, port, host='127.0.0.1', timeout=INFINITE, source_address=ALL):
+        """connect(self, port, host='127.0.0.1', timeout=INFINITE, source_address=ALL)
+        Connect to a socket that prealably performed a `listen()`.
+
+        :param port: Target port connect.
+        :param host: Target host.
+        :param timeout: Maximum time to wait. slc.INFINITE means blocking. 0 means
+            non-blocking. Any strictly positive number means to wait for this
+            maximum time in seconds to wait. An error is raised in the latter
+            case if no data is received.
+        :param source_address: Address on which to perform the connection. None
+            means all available interfaces.
+        """
         ts_begin = time.time()
 
         self.state |= set(("client",))
-        self.target_addresses.append((address, port))
+        self.target_addresses.append((host, port))
         self.source_addresses.append(source_address)
-        target = (address, port)
+        target = (host, port)
 
         # Send configuration
         self.data_to_send[target] = []
@@ -196,8 +239,13 @@ class Socket:
             time.sleep(0.1) # Replace by select
             assert self.client_thread.is_alive(), "Client thread terminated unexpectedly."
 
-    def listen(self, port=0, address='0.0.0.0'):
-        """Act as a server"""
+    def listen(self, port=0, host='0.0.0.0'):
+        """Act as a server. Allows other sockets to `connect()` to it.
+
+        :param port: Port on which to listen. Default (0) is to let the operating
+            system decide which port, available on the variable `ports`.
+        :param host: Host address on which to listen.
+        """
         self.state |= set(('server',))
 
         if self.encrypt:
@@ -205,7 +253,7 @@ class Socket:
 
         self.servers.append(ThreadedTCPServer(
             self,
-            (address, port),
+            (host, port),
             SocketserverHandler,
         ))
         self.servers[-1].shutdown_requested_why_is_this_variable_mangled_by_default = False
@@ -225,10 +273,20 @@ class Socket:
         return advertiser
 
     def discover(self, stype, sname, advertisername=""):
+        """Discover the sockets advertising on the local network."""
         se = minusconf.Seeker(stype=stype, aname=advertisername, sname=sname,
                               error_callback=_print_discovery_error)
         se.run()
         return se.results
+
+    def forward(self, other_sock):
+        """Move awaiting data to another socket."""
+        raise NotImplementedError()
+
+    def is_acknowledged(self, message_id):
+        """Returns if the message represented by `message_id` has been
+        successfully received by the pair."""
+        raise NotImplementedError()
 
     def _prepareData(self, data, target):
         # TODO: Use messagepack, fallback on pickle
@@ -240,8 +298,8 @@ class Socket:
             stream = self.crypto_boxes[target].encrypt(stream)
         return stream
 
-    def send(self, data, target=None, raw=False, _locks=True):
-        """send(self, data, target=None, raw=False)
+    def send(self, data, target=ALL, raw=False, _locks=True):
+        """send(self, data, target=ALL, raw=False)
         Send data to peer(s).
 
         :param data: Data to send. Can be any type serializable by the chosen
@@ -284,12 +342,12 @@ class Socket:
             if _locks:
                 self.lock.release()
 
-    def receive(self, source=None, timeout=None, _locks=True):
-        """receive(self, source=None, timeout=None)
+    def receive(self, source=ALL, timeout=INFINITE, _locks=True):
+        """receive(self, source=ALL, timeout=INFINITE)
         Receive data from the peer.
 
         :param source: Tuple (host, port) from which to receive from.
-        :param timeout: Maximum time to wait. None means blocking. 0 means
+        :param timeout: Maximum time to wait. slc.INFINITE means blocking. 0 means
             non-blocking. Any strictly positive number means to wait for this
             maximum time in seconds to wait. An error is raised in the latter
             case if no data is received.
@@ -408,7 +466,22 @@ class Socket:
                 
             return pickle.loads(data_to_return)
 
+    def disconnect(self, target=ALL, timeout=INFINITE):
+        """disconnect(self, target=ALL, timeout=INFINITE)
+        Disconnect target(s) from the communicator.
+
+        :param target: Target to disconnect. slc.ALL means disconnect all
+            peers. A tuple (host, port) means to disconnect this particular
+            target. A list of tuples disconnects the targets in the list.
+        :param timeout: Timeout to ensure all data is sent before disconnecting.
+            slc.INFINITE means blocking, 0 means disconnect and discard pending
+            messages and any positive number is the maximum time to wait before
+            discarding the messages (TODO: Or raising an exception?).
+        """
+        raise NotImplementedError()
+
     def shutdown(self):
+        """Disconnects every peer and shutdowns the communicator."""
         self.state = set()
 
         sockets_to_clean = list(self.sockets.values())

@@ -29,6 +29,7 @@ def test_ShutdownSimple():
 
     assert threading.active_count() <= 1
 
+
 def test_ShutdownClientServer():
     a = Socket()
     b = Socket()
@@ -205,8 +206,8 @@ def test_CreateTwoServersBackToBack():
 
 @pytest.mark.parametrize("data_in", data)
 def test_Security(data_in):
-    a = Socket(secure=True)
-    b = Socket(secure=True)
+    a = Socket(encrypt=True)
+    b = Socket(encrypt=True)
 
     a.listen()
     b.connect(a.port)
@@ -235,8 +236,8 @@ def test_compression(data_in):
 
 @pytest.mark.parametrize("data_in", data)
 def test_compressionAndSecure(data_in):
-    a = Socket(compress=True, secure=True)
-    b = Socket(compress=True, secure=True)
+    a = Socket(compress=True, encrypt=True)
+    b = Socket(compress=True, encrypt=True)
 
     a.listen()
     b.connect(a.port)
@@ -284,8 +285,17 @@ def test_disconnect():
 
 
 def test_multipleTargets():
+    raise NotImplementedError()
     a = Socket()
     b = Socket()
+    c = Socket()
+    a.listen()
+    b.listen()
+    c.connect(a.port)
+    c.connect(b.port)
+
+    c.send()
+
 
 
 def test_singleTarget():
