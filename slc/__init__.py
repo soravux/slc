@@ -35,20 +35,20 @@ initLogging()
 # Constants
 #######################################
 
-SERDESER = namedtuple("serdeser", "protocol, version, ser, deser")
-"""Namedtuple specifying a de/serialization protocol.
+SERIALIZER = namedtuple("serializer", "protocol, version, dump, load")
+"""Namedtuple for specifying a serialization protocol.
 
 :param protocol: Protocol name.
 :param version: Protocol version.
-:param ser: Callable that performs the serialization. Use a `partial` to 
+:param dumps: Callable that performs the serialization. Use a `partial` to 
     specify the function arguments.
-:param deser: Callable that performs the deserialization.
+:param loads: Callable that performs the reverse serialization.
 """
 
 pickser = partial(pickle.dumps, protocol=pickle.HIGHEST_PROTOCOL)
 SER_PICKLE = SERDESER(protocol="pickle", version=pickle.HIGHEST_PROTOCOL,
-                      ser=pickser, deser=pickle.loads)
-"""Pickle de/serialization using the highest protocol available."""
+                      dumps=pickser, loads=pickle.loads)
+"""Pickle serialization using the highest available protocol."""
 
 
 class SOCKET_CONFIG:
@@ -148,32 +148,31 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 #######################################
 
 
-class Socket:
+class Communicator:
     """
         Builds a new communicator.
 
-        :param encryption: Use encryption. This makes the messages readable
+        :param encrypt: Use encryption. This makes the messages readable
             only by the target. It does not ensure that the message is coming
             from the right peer, though.
-        :param authentication: Use authentication. This makes the messages
-            impossible to modify by a tier and ensure the authenticity of the
-            sender.
-        :param compress: Performs compression on the data (TODO: Add namedtuple
+        :param authenticate: Use authentication. This ensures the authenticity 
+            of the sender.
+        :param compress: Performs data compression (TODO: Add namedtuple
             to specify compression)
-        :param serdeser: namedtuple representing the de/serialization protocol.
-            see slc.SERDESER
-        :param buffer_max: Maximum size of the sending data buffer. Past this size,
+        :param serializer: namedtuple representing the serialization protocol.
+            see slc.SERIALIZER
+        :param buffer_cap: Maximum sending buffer capacity. Past this capacity,
             sending data will block.
-        :param retry_timeout: Timeout in seconds before a connection attempt is
+        :param timeout: Timeout in seconds before a connection attempt is
             considered failed.
-        :param n_retries: Number of retries before the socket is considered
-            disconnected. After this quantity of retries, subsequent operations
+        :param retries: Number of retries before a socket is considered
+            disconnected. After this number of retries, subsequent operations
             on the communicator will raise an exception.
-        :param protocol: Underlying protocol to use.
+        :param protocol: Underlying protocol to use ('tcp' or 'udp').
     """
     def __init__(self, encrypt=False, authenticate=False, compress=False,
-                 serdeser=[SER_PICKLE], buffer_max=INFINITE, retry_timeout=30,
-                 n_retries=INFINITE, protocol="tcp"):
+                 serdeser=[SER_PICKLE], buffer_cap=INFINITE, timeout=30,
+                 retries=INFINITE, protocol="tcp"):
         self.protocol = protocol
         self.client_thread = None
         self.server_threads = []
@@ -240,11 +239,11 @@ class Socket:
             assert self.client_thread.is_alive(), "Client thread terminated unexpectedly."
 
     def listen(self, port=0, host='0.0.0.0'):
-        """Act as a server. Allows other sockets to `connect()` to it.
+        """Act as a server. Allows other communicators to `connect()` to it.
 
         :param port: Port on which to listen. Default (0) is to let the operating
             system decide which port, available on the variable `ports`.
-        :param host: Host address on which to listen.
+        :param host: Host address on which to listen to.
         """
         self.state |= set(('server',))
 
@@ -279,8 +278,8 @@ class Socket:
         se.run()
         return se.results
 
-    def forward(self, other_sock):
-        """Move awaiting data to another socket."""
+    def forward(self, other_comm):
+        """Move awaiting data to another communicator."""
         raise NotImplementedError()
 
     def is_acknowledged(self, message_id):
@@ -303,7 +302,7 @@ class Socket:
         Send data to peer(s).
 
         :param data: Data to send. Can be any type serializable by the chosen
-            serialization protocol if `raw` is `None`. If `raw` is `True`, data
+            serialization protocol if `raw` is `False`. If `raw` is `True`, data
             must have a file-like interface, such as a bytes type.
         :param target: Target peer to send the data to. If `None`, send to
             all peers. If set to a tuple of (host, port), send only to this
@@ -311,8 +310,8 @@ class Socket:
             targets.
         :param raw: If the data must be serialized or not before sending.
 
-        :returns: Message ID. Can be used to know either this data have been
-            acknowledged by its recipient(s).
+        :returns: Message ID. Can be used to determine whether or not this 
+            message has been acknowledged by all its recipients.
         """
         if target is None:
             targets = self.data_to_send.keys()
