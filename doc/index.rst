@@ -7,9 +7,12 @@ Preliminary SLC API
 Helper functions / structures
 -----------------------------
 
-.. autoclass:: slc.SERDESER
-
+.. autoclass:: slc.SERIALIZER
 .. autoclass:: slc.SER_PICKLE
+.. autoclass:: slc.COMPRESSOR
+.. autoclass:: slc.COMP_ZLIB_DEFAULT
+.. autoclass:: slc.COMP_ZLIB_MAX
+.. autoclass:: slc.ALL
 .. autoclass:: slc.INFINITE
 
 .. note:
@@ -19,7 +22,7 @@ Helper functions / structures
 Socket Class
 ------------
 
-.. autoclass:: slc.Socket
+.. autoclass:: slc.Communicator
    :members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
