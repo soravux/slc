@@ -36,7 +36,7 @@ initLogging()
 #######################################
 
 SERIALIZER = namedtuple("serializer", "protocol, version, dump, load")
-"""Namedtuple for specifying a serialization protocol.
+"""Namedtuple specifying serialization protocols.
 
 :param protocol: Protocol name.
 :param version: Protocol version.
@@ -45,16 +45,38 @@ SERIALIZER = namedtuple("serializer", "protocol, version, dump, load")
 :param loads: Callable that performs the reverse serialization.
 """
 
-pickser = partial(pickle.dumps, protocol=pickle.HIGHEST_PROTOCOL)
-SER_PICKLE = SERDESER(protocol="pickle", version=pickle.HIGHEST_PROTOCOL,
-                      dumps=pickser, loads=pickle.loads)
+_pickser = partial(pickle.dumps, protocol=pickle.HIGHEST_PROTOCOL)
+SER_PICKLE = SERIALIZER(protocol="pickle", version=pickle.HIGHEST_PROTOCOL,
+                        dump=_pickser, load=pickle.loads)
 """Pickle serialization using the highest available protocol."""
+
+
+COMPRESSOR = namedtuple("compressor", "name, version, comp, decomp")
+"""Namedtuple specifying compressors.
+
+:param name: Compressor name.
+:param version: Compressor version.
+:param comp: Callable that performs the compression. Use a `partial` to specify
+    the function arguments.
+:param decomp: Callable that performs the decompression."""
+
+
+COMP_ZLIB_DEFAULT = COMPRESSOR(name='zlib', version=zlib.ZLIB_VERSION,
+                               comp=zlib.compress, decomp=zlib.decompress)
+"""zlib compression with default (6) compression level."""
+
+
+_compress_max = partial(zlib.compress, level=9)
+
+COMP_ZLIB_MAX = COMPRESSOR(name='zlib', version=zlib.ZLIB_VERSION,
+                           comp=_compress_max, decomp=zlib.decompress)
+"""zlib compression with maximum (9) compression level."""
 
 
 class SOCKET_CONFIG:
     NORMAL = 0b00000000
-    ENCRYPTED = 0b00000001
-    COMPRESSED = 0b00000010
+    SECURE = 0b00000001
+    COMPRESS = 0b00000010
 
 
 ALL = None
@@ -96,7 +118,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
 
-        if self.server.parent_socket.encrypt:
+        if self.server.parent_socket.secure:
             our_key = pickle.dumps(security.getOurPublicKey())
             data_size = struct.pack('!IH', len(our_key), 1)
             self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
@@ -124,7 +146,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
             if not self.header_received:
                 self.header_received = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
 
-            if self.server.parent_socket.encrypt and not self.client_address in self.server.parent_socket.crypto_boxes:
+            if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
                 source_key = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
                 if source_key:
                     self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
@@ -149,18 +171,17 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
 
 class Communicator:
-    """
+    """Communicator(self, secure=False, compress=None, serializer=slc.SER_PICKLE, buffer_cap=slc.INFINITE, timeout=30, retries=INFINITE, protocol="tcp")
+        
         Builds a new communicator.
 
-        :param encrypt: Use encryption. This makes the messages readable
-            only by the target. It does not ensure that the message is coming
-            from the right peer, though.
-        :param authenticate: Use authentication. This ensures the authenticity 
+        :param secure: Use encryption and authentication (**TODO**). This makes the
+            messages readable only by the target and validates the authenticity
             of the sender.
-        :param compress: Performs data compression (TODO: Add namedtuple
-            to specify compression)
-        :param serializer: namedtuple representing the serialization protocol.
-            see slc.SERIALIZER
+        :param compress: Compression scheme to use. `None` deactivates
+            compression. See slc.COMPRESSOR.
+        :param serializer: Namedtuple representing the serialization protocol.
+            See slc.SERIALIZER.
         :param buffer_cap: Maximum sending buffer capacity. Past this capacity,
             sending data will block.
         :param timeout: Timeout in seconds before a connection attempt is
@@ -168,11 +189,12 @@ class Communicator:
         :param retries: Number of retries before a socket is considered
             disconnected. After this number of retries, subsequent operations
             on the communicator will raise an exception.
-        :param protocol: Underlying protocol to use ('tcp' or 'udp').
+        :param protocol: Underlying protocol to use ('tcp', 'udp', 'icmp'). Only
+            'tcp' is supported as of now.
     """
-    def __init__(self, encrypt=False, authenticate=False, compress=False,
-                 serdeser=[SER_PICKLE], buffer_cap=INFINITE, timeout=30,
-                 retries=INFINITE, protocol="tcp"):
+    def __init__(self, secure=False, compress=None, serializer=SER_PICKLE,
+                 buffer_cap=INFINITE, timeout=30, retries=INFINITE,
+                 protocol="tcp"):
         self.protocol = protocol
         self.client_thread = None
         self.server_threads = []
@@ -193,12 +215,14 @@ class Communicator:
         self.target_addresses = []
         self.source_addresses = []
         self.port = None
-        self.encrypt = encrypt * SOCKET_CONFIG.ENCRYPTED
-        self.authenticate = authenticate * SOCKET_CONFIG.ENCRYPTED
-        self.compressed = compress * SOCKET_CONFIG.COMPRESSED
-        self.config = self.encrypt | self.compressed
+        self.serializer = serializer
+        self.secure = secure * SOCKET_CONFIG.SECURE
+        self.compressed = (compress is not None) * SOCKET_CONFIG.COMPRESS
+        self.compress = compress
+        self.config = self.secure | self.compressed
+        self.receive_cond = threading.Condition()
 
-        if self.encrypt:
+        if self.secure:
             self.crypto_boxes = {}
 
     def connect(self, port, host='127.0.0.1', timeout=INFINITE, source_address=ALL):
@@ -229,13 +253,18 @@ class Communicator:
             self.client_thread.daemon = True
             self.client_thread.start()
 
+        if timeout == 0:
+            return
+
         is_not_ready = lambda: not self.client_header_received[target] or (
-            self.encrypt and not target in self.crypto_boxes
+            self.secure and not target in self.crypto_boxes
         )
         while is_not_ready():
             if timeout is not None and time.time() - ts_begin > timeout:
-                break
-            time.sleep(0.1) # Replace by select
+                raise ConnectionError('Timeout in connection.')
+            self.receive_cond.acquire()
+            self.receive_cond.wait(0.1)
+            self.receive_cond.release()
             assert self.client_thread.is_alive(), "Client thread terminated unexpectedly."
 
     def listen(self, port=0, host='0.0.0.0'):
@@ -247,7 +276,7 @@ class Communicator:
         """
         self.state |= set(('server',))
 
-        if self.encrypt:
+        if self.secure:
             security.initializeSecurity()
 
         self.servers.append(ThreadedTCPServer(
@@ -291,9 +320,9 @@ class Communicator:
         # TODO: Use messagepack, fallback on pickle
         # TODO: pickle.HIGHEST_PROTOCOL gives a pretty large output.
         stream = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
-        if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED:
-            stream = zlib.compress(stream)
-        if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED:
+        if self.sockets_config[target] & SOCKET_CONFIG.COMPRESS:
+            stream = self.compress.comp(stream)
+        if self.sockets_config[target] & SOCKET_CONFIG.SECURE:
             stream = self.crypto_boxes[target].encrypt(stream)
         return stream
 
@@ -398,7 +427,7 @@ class Communicator:
                     for x in self.data_awaiting[target]:
                         # Do not resend header
                         resend_data_size, resend_msg_idx = struct.unpack('!IH', x[:config_size])
-                        if resend_data_size != 0 and (resend_msg_idx > 1 or not self.encrypt):
+                        if resend_data_size != 0 and (resend_msg_idx > 1 or not self.secure):
                             logger = logging.getLogger("slc")
                             logger.warning('Sending a message again...')
                             self.data_to_send[target].append(x)
@@ -406,6 +435,9 @@ class Communicator:
 
                     if _locks:
                         self.lock.release()
+                    self.receive_cond.acquire()
+                    self.receive_cond.notify_all()
+                    self.receive_cond.release()
                     return True # Move that and the previous if elsewhere?
 
                 elif data_size == 1:
@@ -458,12 +490,19 @@ class Communicator:
             break
 
         if data_to_return:
-            if self.sockets_config[target] & SOCKET_CONFIG.ENCRYPTED and msg_source in self.crypto_boxes:
+            if self.sockets_config[target] & SOCKET_CONFIG.SECURE and msg_source in self.crypto_boxes:
                 data_to_return = self.crypto_boxes[msg_source].decrypt(bytes(data_to_return))
-            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESSED and (not self.encrypt or msg_source in self.crypto_boxes):
-                data_to_return = zlib.decompress(data_to_return)
-                
+            if self.sockets_config[target] & SOCKET_CONFIG.COMPRESS and (not self.secure or msg_source in self.crypto_boxes):
+                data_to_return = self.compress.decomp(data_to_return)
+            
+            self.receive_cond.acquire()
+            self.receive_cond.notify_all()
+            self.receive_cond.release()
             return pickle.loads(data_to_return)
+
+        self.receive_cond.acquire()
+        self.receive_cond.notify_all()
+        self.receive_cond.release()
 
     def disconnect(self, target=ALL, timeout=INFINITE):
         """disconnect(self, target=ALL, timeout=INFINITE)
@@ -527,7 +566,7 @@ class Communicator:
                     self.lock.acquire()
                     self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.recv_msg_idx[target], self.config))
 
-                    if self.encrypt:
+                    if self.secure:
                         our_key = pickle.dumps(security.getOurPublicKey())
                         data_size = struct.pack('!IH', len(our_key), 1)
                         self.data_to_send[target].insert(1, data_size + our_key)
@@ -584,7 +623,7 @@ class Communicator:
                     if not self.client_header_received[target]:
                         self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
 
-                    if self.encrypt and not target in self.crypto_boxes:
+                    if self.secure and not target in self.crypto_boxes:
                         source_key = self.receive(source=target, timeout=0, _locks=False)
                         if source_key:
                             self.crypto_boxes[target] = security.getBox(source_key, target)
