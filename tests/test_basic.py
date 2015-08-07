@@ -4,7 +4,8 @@ import struct
 
 import pytest
 
-from slc import Socket
+from slc import Communicator as Comm
+from slc import (COMP_ZLIB_DEFAULT, COMP_ZLIB_MAX, SER_PICKLE)
 
 
 data = [
@@ -23,7 +24,7 @@ second_data = [
 
 
 def test_ShutdownSimple():
-    a = Socket()
+    a = Comm()
 
     a.shutdown()
 
@@ -31,8 +32,8 @@ def test_ShutdownSimple():
 
 
 def test_ShutdownClientServer():
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen(31415)
     b.connect(31415)
 
@@ -43,9 +44,9 @@ def test_ShutdownClientServer():
 
 
 def test_ShutdownMultiple():
-    a = Socket()
-    b = Socket()
-    c = Socket()
+    a = Comm()
+    b = Comm()
+    c = Comm()
     a.listen(27182)
     b.connect(27182)
     c.connect(27182)
@@ -59,8 +60,8 @@ def test_ShutdownMultiple():
 
 @pytest.mark.parametrize("data_in", data)
 def test_SendToServer(data_in):
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen()
     b.connect(a.port)
 
@@ -73,8 +74,8 @@ def test_SendToServer(data_in):
 
 @pytest.mark.parametrize("data_in", data)
 def test_SendToSingleClient(data_in):
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen()
     b.connect(a.port)
 
@@ -88,9 +89,9 @@ def test_SendToSingleClient(data_in):
 def test_SendToAllClients(data_in):
     # Testing broadcast
 
-    a = Socket()
-    b = Socket()
-    c = Socket()
+    a = Comm()
+    b = Comm()
+    c = Comm()
 
     a.listen()
     b.connect(a.port)
@@ -106,9 +107,9 @@ def test_SendToAllClients(data_in):
 def test_SendToAllServers(data_in):
     # Testing multiple connection sending by a client
 
-    a = Socket()
-    b = Socket()
-    c = Socket()
+    a = Comm()
+    b = Comm()
+    c = Comm()
     a.listen()
     b.listen()
     c.connect(a.port)
@@ -123,8 +124,8 @@ def test_SendToAllServers(data_in):
 
 @pytest.mark.parametrize("data_in1,data_in2", zip(data, second_data))
 def test_SendMultipleData(data_in1, data_in2):
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen()
     b.connect(a.port)
 
@@ -140,11 +141,11 @@ def test_SendMultipleData(data_in1, data_in2):
 
 
 def test_SendMultipleDataMultipleClient():
-    a = Socket()
-    b = Socket()
-    c = Socket()
-    d = Socket()
-    e = Socket()
+    a = Comm()
+    b = Comm()
+    c = Comm()
+    d = Comm()
+    e = Comm()
     a.listen()
     b.connect(a.port)
     c.connect(a.port)
@@ -170,8 +171,8 @@ def test_SendMultipleDataMultipleClient():
 
 
 def test_SendMultipleData():
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen()
     b.connect(a.port)
 
@@ -188,9 +189,9 @@ def test_SendMultipleData():
 
 
 def test_CreateTwoServersBackToBack():
-    a = Socket()
-    b = Socket()
-    c = Socket()
+    a = Comm()
+    b = Comm()
+    c = Comm()
 
     a.listen()
     a.shutdown()
@@ -206,8 +207,8 @@ def test_CreateTwoServersBackToBack():
 
 @pytest.mark.parametrize("data_in", data)
 def test_Security(data_in):
-    a = Socket(encrypt=True)
-    b = Socket(encrypt=True)
+    a = Comm(secure=True)
+    b = Comm(secure=True)
 
     a.listen()
     b.connect(a.port)
@@ -221,8 +222,8 @@ def test_Security(data_in):
 
 @pytest.mark.parametrize("data_in", data)
 def test_compression(data_in):
-    a = Socket(compress=True)
-    b = Socket(compress=True)
+    a = Comm(compress=COMP_ZLIB_DEFAULT)
+    b = Comm(compress=COMP_ZLIB_DEFAULT)
 
     a.listen()
     b.connect(a.port)
@@ -236,8 +237,8 @@ def test_compression(data_in):
 
 @pytest.mark.parametrize("data_in", data)
 def test_compressionAndSecure(data_in):
-    a = Socket(compress=True, encrypt=True)
-    b = Socket(compress=True, encrypt=True)
+    a = Comm(compress=COMP_ZLIB_DEFAULT, secure=True)
+    b = Comm(compress=COMP_ZLIB_DEFAULT, secure=True)
 
     a.listen()
     b.connect(a.port)
@@ -249,17 +250,17 @@ def test_compressionAndSecure(data_in):
     a.shutdown(); b.shutdown()
 
 
-def test_wronglyConfiguredSocket():
-    a = Socket(compress=True)
-    b = Socket(compress=False)
+def test_wronglyConfiguredComm():
+    a = Comm(compress=COMP_ZLIB_DEFAULT)
+    b = Comm(compress=None)
     a.listen()
     with pytest.raises(AssertionError):
         b.connect(a.port)
 
 
 def test_disconnect():
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen()
     b.connect(a.port)
 
@@ -286,9 +287,9 @@ def test_disconnect():
 
 def test_multipleTargets():
     raise NotImplementedError()
-    a = Socket()
-    b = Socket()
-    c = Socket()
+    a = Comm()
+    b = Comm()
+    c = Comm()
     a.listen()
     b.listen()
     c.connect(a.port)
@@ -304,7 +305,7 @@ def test_singleTarget():
 
 def test_wrongTarget():
     raise NotImplementedError()
-    #a = Socket()
+    #a = Comm()
     #a.connect(8080, "127.1.2.3")
     #time.sleep(2)
 
@@ -314,8 +315,8 @@ def test_simultaneousListenConnect():
 
 
 def test_multipleListen():
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
 
     a.listen(12340)
     a.listen(12341)
@@ -330,8 +331,8 @@ def test_multipleListen():
 
 
 def test_asynchronousConnect():
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
 
     a.listen()
     b.connect(a.port, timeout=0)
@@ -343,8 +344,8 @@ def test_asynchronousConnect():
 
 
 def test_discover():
-    a = Socket()
-    b = Socket()
+    a = Comm()
+    b = Comm()
     a.listen()
     a.advertise("test_type", "test_name", "test_advertiser")
     time.sleep(0.5)
