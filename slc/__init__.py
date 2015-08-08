@@ -176,7 +176,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
             try:
                 _, _, _ = select.select([self.request], [], [], self.server.parent_socket.poll_delay)
-            except OSError:
+            except (OSError, ValueError):
                 pass
 
     def finish(self):
@@ -549,7 +549,7 @@ class Communicator:
 
                 try:
                     _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
-                except OSError:
+                except (OSError, ValueError):
                     pass
 
                 if 'client' in self.state:
@@ -677,7 +677,7 @@ class Communicator:
                         for data in self.data_to_send[target]:
                             try:
                                 res = socket_.sendall(data)
-                            except BrokenPipeError:
+                            except (BrokenPipeError, OSError):
                                 try:
                                     socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
                                     socket_.close()
@@ -716,5 +716,5 @@ class Communicator:
             try:
                 _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
                 # ValueError: file descriptor cannot be a negative integer (-1) => Validate
-            except OSError:
+            except (OSError, ValueError):
                 pass
