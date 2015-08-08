@@ -299,7 +299,7 @@ class Communicator:
         """Act as a server. Allows other communicators to `connect()` to it.
 
         :param port: Port on which to listen. Default (0) is to let the operating
-            system decide which port, available on the variable `ports`.
+            system decide which port, available on the variable `port`.
         :param host: Host address on which to listen to.
         """
         self.state |= set(('server',))
@@ -364,12 +364,14 @@ class Communicator:
         raise NotImplementedError()
 
     def is_acknowledged(self, message_id, target=ALL):
-        """Returns if the message represented by `message_id` has been
+        """is_acknowledged(self, message_id, target=ALL)
+        Returns if the message represented by `message_id` has been
         successfully received by the pair.
 
         :param message_id: Message ID provided by `send`.
-        :param target: Check for a given target. If `ALL`, the function will
-            return true only if all targets have acknowledged the message."""
+        :param target: Check for a given target or list of targets. If there
+            are multiple targets, the function will return true only if all
+            targets have acknowledged the message."""
         if target is ALL:
             target = list(self.data_awaiting_id.keys())
 
