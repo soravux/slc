@@ -323,20 +323,25 @@ def test_disconnect(data_in):
     a.listen()
     b.connect(a.port)
 
-    time.sleep(0.1)
-
-    target = ('127.0.0.1', a.port)
-    sock = b.sockets[target]
+    target_b = ('127.0.0.1', a.port)
+    target_a = ('127.0.0.1', list(b.sockets.values())[0].getsockname()[1])
     data_in = 'disconnect test'
 
-    data_serialized = b._prepareData(data_in, target)
-    data_header = struct.pack('!IH', len(data_serialized), b.send_msg_idx[target])
-    b.send_msg_idx[target] += 1
-
-    sock.shutdown(2)
-    sock.close()
-
-    b.data_awaiting[target].append(data_header + data_serialized)
+    b.send(data_in)
+    
+    # Simulate a loss of connection and packet
+    time.sleep(0.1)
+    b.sockets[target_b].shutdown(2)
+    try:
+        b.sockets[target_b].close()
+    except KeyError:
+        pass
+    a.data_received.pop(target_a, None)
+    a.sockets[target_a].shutdown(2)
+    try:
+        a.sockets[target_a].close()
+    except KeyError:
+        pass
 
     data_out = a.recv(timeout=0.5)
     assert data_out == data_in
