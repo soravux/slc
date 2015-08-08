@@ -45,12 +45,17 @@ def stringToFilename(data):
     return ''.join(c for c in data if c in valid_chars)
 
 
-def getBox(remoteKey, target):
+def getTargetKey(target):
     target = stringToFilename(str(target[0]))
     target_key_path = (jn(slc_path, target))
     if os.path.isfile(target_key_path):
         with open(target_key_path, 'rb') as fhdl:
-            key_already_here = fhdl.read()
+            return fhdl.read()
+
+
+def validateTargetKey(remoteKey, target):
+    key_already_here = getTargetKey(target)
+    if key_already_here is not None:
         if key_already_here != remoteKey:
             raise PossibleSecurityBreach('The key sent by the peer is not the '
                                          'same as the one already on the '
@@ -59,6 +64,10 @@ def getBox(remoteKey, target):
         with open(target_key_path, 'wb') as fhdl:
             fhdl.write(remoteKey)
         logger.warning('Added key for {} in wallet.'.format(target))
+
+
+def getBox(remoteKey, target):
+    validateTargetKey(remoteKey, target)
     return libnacl.public.Box(hostkey.sk, remoteKey)
 
 
