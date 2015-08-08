@@ -12,7 +12,12 @@ import zlib
 from functools import partial
 from collections import defaultdict, namedtuple
 
-from . import security, minusconf
+try:
+    import msgpack
+except ImportError:
+    pass
+
+from . import security, discovery
 
 
 #######################################
@@ -45,11 +50,23 @@ SERIALIZER = namedtuple("serializer", "protocol, version, dump, load")
 :param loads: Callable that performs the reverse serialization.
 """
 
-_pickser = partial(pickle.dumps, protocol=pickle.HIGHEST_PROTOCOL)
-SER_PICKLE = SERIALIZER(protocol="pickle", version=pickle.HIGHEST_PROTOCOL,
-                        dump=_pickser, load=pickle.loads)
+_pickser_highest = partial(pickle.dumps, protocol=pickle.HIGHEST_PROTOCOL)
+SER_PICKLE_HIGHEST = SERIALIZER(protocol="pickle", version=pickle.HIGHEST_PROTOCOL,
+                                dump=_pickser_highest, load=pickle.loads)
 """Pickle serialization using the highest available protocol."""
 
+_pickser_text = partial(pickle.dumps, protocol=0)
+SER_PICKLE_TEXT = SERIALIZER(protocol="pickle", version=0,
+                                dump=_pickser_text, load=pickle.loads)
+"""Pickle serialization using text-compatible protocol."""
+
+try:
+    _msgpack_ser = partial(msgpack.packb, use_bin_type=True)
+    _msgpack_deser = partial(msgpack.unpackb, use_list=False)
+    SER_MSGPACK = SERIALIZER(protocol="msgpack", version=msgpack.__version__,
+                             dump=_msgpack, load=_msgpack_deser)
+except NameError:
+    pass
 
 COMPRESSOR = namedtuple("compressor", "name, version, comp, decomp")
 """Namedtuple specifying compressors.
@@ -171,7 +188,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
 
 class Communicator:
-    """Communicator(self, secure=False, compress=None, serializer=slc.SER_PICKLE, buffer_cap=slc.INFINITE, timeout=30, retries=INFINITE, protocol="tcp")
+    """Communicator(self, secure=False, compress=None, serializer=slc.SER_PICKLE_HIGHEST, buffer_cap=slc.INFINITE, timeout=30, retries=INFINITE, protocol="tcp")
         
         Builds a new communicator.
 
@@ -192,7 +209,7 @@ class Communicator:
         :param protocol: Underlying protocol to use ('tcp', 'udp', 'icmp'). Only
             'tcp' is supported as of now.
     """
-    def __init__(self, secure=False, compress=None, serializer=SER_PICKLE,
+    def __init__(self, secure=False, compress=None, serializer=SER_PICKLE_HIGHEST,
                  buffer_cap=INFINITE, timeout=30, retries=INFINITE,
                  protocol="tcp"):
         self.protocol = protocol
@@ -221,6 +238,8 @@ class Communicator:
         self.compress = compress
         self.config = self.secure | self.compressed
         self.receive_cond = threading.Condition()
+        self.advertiser = None
+        self.advertiser_stop = threading.Event()
 
         if self.secure:
             self.crypto_boxes = {}
@@ -291,21 +310,33 @@ class Communicator:
 
         self.port = self.servers[-1].socket.getsockname()[1]
 
-    def advertise(self, stype, sname, advertisername, location=""):
-        """Advertise the current server on the network"""
-        # TODO: ports can be comma separated
-        assert 'server' in self.state
-        service = minusconf.Service(stype, self.port, sname, location)
-        advertiser = minusconf.ThreadAdvertiser([service], advertisername)
-        advertiser.start()
-        return advertiser
+    def advertise(self, name):
+        """Advertise the current server on the network.
 
-    def discover(self, stype, sname, advertisername=""):
-        """Discover the sockets advertising on the local network."""
-        se = minusconf.Seeker(stype=stype, aname=advertisername, sname=sname,
-                              error_callback=_print_discovery_error)
-        se.run()
-        return se.results
+        :param name: Name to advertise."""
+        assert 'server' in self.state, "The socket is not listening, nothing to advertise."
+        if self.advertiser:
+            self.stopAdvertising()
+        self.advertiser_stop.clear()
+        self.advertiser = threading.Thread(target=discovery.advertise,
+            kwargs={'name': name, 'cond': self.advertiser_stop, 'port': })
+        self.advertiser.daemon = True
+        self.advertiser.start()
+
+    def stopAdvertising(self):
+        """Stops advertising the socket."""
+        self.advertiser_stop.set()
+        self.advertiser.join()
+        self.advertiser = None
+
+    def discover(self, name=None):
+        """Discover the sockets advertising on the local network.
+
+        :param name: Name to discover. Defaults to discover everything."""
+        results = discovery.discover()
+        if type(name) is str:
+            name = name.encode('utf-8')
+        return [r for r in results if name is None or r[0] == name]
 
     def forward(self, other_comm):
         """Move awaiting data to another communicator."""
@@ -631,5 +662,6 @@ class Communicator:
                     self.lock.release()
             try:
                 _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
+                # ValueError: file descriptor cannot be a negative integer (-1) => Validate
             except OSError:
                 pass
