@@ -37,6 +37,7 @@ def initLogging(stream=None):
 
 initLogging()
 
+
 #######################################
 # Constants
 #######################################
@@ -70,7 +71,7 @@ try:
     SER_MSGPACK = SERIALIZER(protocol="msgpack", version=msgpack.__version__,
                              dump=_msgpack, load=_msgpack_deser)
 
-    #SER_BEST = SER_MSGPACK
+    SER_BEST = SER_MSGPACK
 except NameError:
     pass
 
@@ -354,7 +355,6 @@ class Communicator:
 
         :param name: Name to discover. Defaults to discover everything."""
         results = discovery.discover()
-        print(results)
         if type(name) is not str and name is not None:
             name = name.decode('utf-8')
         return [r for r in results if name is None or r[0] == name]
