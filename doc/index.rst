@@ -2,13 +2,18 @@ Preliminary SLC API
 ===================
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 3
+
+   rationale
+   self
+
 
 Helper functions / structures
 -----------------------------
 
 .. autoclass:: slc.SERIALIZER
-.. autoclass:: slc.SER_PICKLE
+.. autoclass:: slc.SER_PICKLE_HIGHEST
+.. autoclass:: slc.SER_PICKLE_TEXT
 .. autoclass:: slc.COMPRESSOR
 .. autoclass:: slc.COMP_ZLIB_DEFAULT
 .. autoclass:: slc.COMP_ZLIB_MAX
@@ -19,8 +24,8 @@ Helper functions / structures
    automodule:: slc
    :members:
 
-Socket Class
-------------
+Communicator Class
+------------------
 
 .. autoclass:: slc.Communicator
    :members:
