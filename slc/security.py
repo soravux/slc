@@ -21,6 +21,7 @@ jn = os.path.join
 slc_path = jn(os.path.expanduser('~'), '.slc')
 key_path = jn(slc_path, '0.0.0.0')
 
+
 def initializeSecurity():
     global hostkey
     # Check if user has a .slc directory to hold the keys
