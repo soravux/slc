@@ -166,10 +166,10 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                 pass
 
             if not self.header_received:
-                self.header_received = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
+                self.header_received = self.server.parent_socket.recv(source=self.client_address, timeout=0, _locks=False)
 
             if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
-                source_key = self.server.parent_socket.receive(source=self.client_address, timeout=0, _locks=False)
+                source_key = self.server.parent_socket.recv(source=self.client_address, timeout=0, _locks=False)
                 if source_key:
                     self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
             self.server.parent_socket.lock.release()
@@ -198,7 +198,7 @@ class Communicator:
         
         Builds a new communicator.
 
-        :param secure: Use encryption and authentication (**TODO**). This makes the
+        :param secure: Use encryption and authentication. This makes the
             messages readable only by the target and validates the authenticity
             of the sender.
         :param compress: Compression scheme to use. `None` deactivates
@@ -435,6 +435,15 @@ class Communicator:
         self.next_message_id += 1
         return self.next_message_id - 1
 
+    def recv(self, source=ALL, timeout=INFINITE, _locks=True):
+        """recv(self, source=ALL, timeout=INFINITE)
+        Receive data. Same as `receive()`, but won't provide the peer
+        address."""
+        ret = self.receive(source, timeout, _locks)
+        if ret not in [None, False, True]:
+            ret = ret[1]
+        return ret
+
     def receive(self, source=ALL, timeout=INFINITE, _locks=True):
         """receive(self, source=ALL, timeout=INFINITE)
         Receive data from the peer.
@@ -567,7 +576,7 @@ class Communicator:
             self.receive_cond.acquire()
             self.receive_cond.notify_all()
             self.receive_cond.release()
-            return pickle.loads(data_to_return)
+            return msg_source, pickle.loads(data_to_return)
 
         self.receive_cond.acquire()
         self.receive_cond.notify_all()
@@ -696,10 +705,10 @@ class Communicator:
 
                     # Receive and process the connection header
                     if not self.client_header_received[target]:
-                        self.client_header_received[target] = self.receive(source=target, timeout=0, _locks=False)
+                        self.client_header_received[target] = self.recv(source=target, timeout=0, _locks=False)
 
                     if self.secure and not target in self.crypto_boxes:
-                        source_key = self.receive(source=target, timeout=0, _locks=False)
+                        source_key = self.recv(source=target, timeout=0, _locks=False)
                         if source_key:
                             self.crypto_boxes[target] = security.getBox(source_key, target)
 
