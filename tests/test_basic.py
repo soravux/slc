@@ -185,8 +185,17 @@ def test_SendMultipleData(data_in1, data_in2):
 
 
 @pytest.mark.parametrize("data_in", data)
+def test_noTarget(data_in):
+    a = Comm()
+    a.send(data_in)
+
+
+@pytest.mark.parametrize("data_in", data)
 def test_wrongTarget(data_in):
-    raise NotImplementedError()
+    a = Comm()
+    random_target = ('127.1.1.5', 32323)
+    with pytest.raises(KeyError):
+        a.send(data_in, target=random_target)
 
 
 def test_SendMultipleDataMultipleClient():
@@ -333,10 +342,6 @@ def test_disconnect(data_in):
     assert data_out == data_in
 
     a.shutdown(); b.shutdown()
-
-
-def test_simultaneousListenConnect():
-    raise NotImplementedError()
 
 
 @pytest.mark.parametrize("data_in", data)
