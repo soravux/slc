@@ -66,7 +66,7 @@ def test_SendToServer(data_in):
     b.connect(a.port)
 
     b.send(data_in)
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_in == data_out
 
     b.shutdown(); a.shutdown()
@@ -80,7 +80,7 @@ def test_SendToSingleClient(data_in):
     b.connect(a.port)
 
     a.send(data_in)
-    data_out = b.receive()
+    data_out = b.recv()
     assert data_in == data_out
 
     a.shutdown(); b.shutdown()
@@ -98,7 +98,7 @@ def test_SendToAllClients(data_in):
     c.connect(a.port)
 
     a.send(data_in)
-    data_out1, data_out2 = b.receive(), c.receive()
+    data_out1, data_out2 = b.recv(), c.recv()
     assert data_in == data_out1 == data_out2
 
     a.shutdown(); b.shutdown(); c.shutdown()
@@ -115,7 +115,7 @@ def test_SendToAllServers(data_in):
     c.connect(b.port)
 
     c.send(data_in)
-    data_out1, data_out2 = a.receive(), b.receive()
+    data_out1, data_out2 = a.recv(), b.recv()
     assert data_in == data_out1
     assert data_in == data_out2
 
@@ -135,7 +135,7 @@ def test_SendTarget(data_in):
     target = ('127.0.0.1', a.port)
 
     c.send(data_in, target=target)
-    data_out1, data_out2 = a.receive(), b.receive(timeout=0.1)
+    data_out1, data_out2 = a.recv(), b.recv(timeout=0.1)
     assert data_out1 == data_in
     assert data_out2 is None
 
@@ -158,7 +158,7 @@ def test_SendMultipleTargets(data_in):
     targets = [('127.0.0.1', a.port), ('127.0.0.1', b.port)]
 
     d.send(data_in, target=targets)
-    data_out1, data_out2, data_out3 = a.receive(), b.receive(), c.receive(timeout=0.1)
+    data_out1, data_out2, data_out3 = a.recv(), b.recv(), c.recv(timeout=0.1)
     assert data_in == data_out1
     assert data_in == data_out2
     assert data_out3 is None
@@ -176,12 +176,17 @@ def test_SendMultipleData(data_in1, data_in2):
     b.send(data_in1)
     b.send(data_in2)
 
-    data_out1, data_out2 = a.receive(), a.receive()
+    data_out1, data_out2 = a.recv(), a.recv()
 
     assert data_in1 == data_out1
     assert data_in2 == data_out2
 
     a.shutdown(); b.shutdown()
+
+
+@pytest.mark.parametrize("data_in", data)
+def test_wrongTarget(data_in):
+    raise NotImplementedError()
 
 
 def test_SendMultipleDataMultipleClient():
@@ -197,17 +202,17 @@ def test_SendMultipleDataMultipleClient():
     e.connect(a.port)
 
     b.send(data[0])
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_out == data[0]
 
     c.send(data[1])
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_out == data[1]
 
     d.send(data[2])
     e.send(data[3])
-    data_out1 = a.receive()
-    data_out2 = a.receive()
+    data_out1 = a.recv()
+    data_out2 = a.recv()
     assert data_out1 == data[2]
     assert data_out2 == data[3]
 
@@ -226,7 +231,7 @@ def test_SendMultipleData():
 
     for y in range(10):
         for x in data:
-            data_out = a.receive()
+            data_out = a.recv()
             assert x == data_out
 
     a.shutdown(); b.shutdown()
@@ -243,7 +248,7 @@ def test_CreateTwoServersBackToBack():
     c.connect(b.port)
 
     c.send(data[0])
-    data_out = b.receive()
+    data_out = b.recv()
     assert data[0] == data_out
 
     a.shutdown(); b.shutdown(); c.shutdown()
@@ -258,7 +263,7 @@ def test_Security(data_in):
     b.connect(a.port)
 
     b.send(data_in)
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_out == data_in
 
     a.shutdown(); b.shutdown()
@@ -273,7 +278,7 @@ def test_compression(data_in):
     b.connect(a.port)
 
     b.send(data_in)
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_out == data_in
 
     a.shutdown(); b.shutdown()
@@ -288,7 +293,7 @@ def test_compressionAndSecure(data_in):
     b.connect(a.port)
 
     b.send(data_in)
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_out == data_in
 
     a.shutdown(); b.shutdown()
@@ -324,35 +329,10 @@ def test_disconnect(data_in):
 
     b.data_awaiting[target].append(data_header + data_serialized)
 
-    data_out = a.receive()
+    data_out = a.recv(timeout=0.5)
     assert data_out == data_in
 
     a.shutdown(); b.shutdown()
-
-
-def test_multipleTargets():
-    raise NotImplementedError()
-    a = Comm()
-    b = Comm()
-    c = Comm()
-    a.listen()
-    b.listen()
-    c.connect(a.port)
-    c.connect(b.port)
-
-    c.send()
-
-
-
-def test_singleTarget():
-    raise NotImplementedError()
-
-
-def test_wrongTarget():
-    raise NotImplementedError()
-    #a = Comm()
-    #a.connect(8080, "127.1.2.3")
-    #time.sleep(2)
 
 
 def test_simultaneousListenConnect():
@@ -371,9 +351,11 @@ def test_multipleListen(data_in):
 
     data_in = "test data"
     b.send(data_in)
-    data_out1, data_out2 = a.receive(), a.receive()
+    data_out1, data_out2 = a.recv(timeout=0.5), a.recv(timeout=0.5)
     assert data_in == data_out1
     assert data_in == data_out2
+
+    a.shutdown(); b.shutdown()
 
 
 @pytest.mark.parametrize("data_in", data)
@@ -386,7 +368,7 @@ def test_asynchronousConnect(data_in):
 
     data_in = "test data"
     b.send(data_in)
-    data_out = a.receive()
+    data_out = a.recv()
     assert data_in == data_out
 
 
@@ -428,8 +410,8 @@ def test_messageIDSimple(data_in):
 
     assert b.is_acknowledged(mid) == False
 
-    data_out = a.receive()
-    b.receive(timeout=0.5)
+    data_out = a.recv()
+    b.recv(timeout=0.5)
     print(b.data_awaiting_id)
 
     assert b.is_acknowledged(mid) == True
@@ -445,10 +427,24 @@ def test_messageIDNonListening(data_in):
     a.shutdown()
 
     mid = b.send(data_in)
-    b.receive(timeout=0.5)
+    b.recv(timeout=0.5)
 
     assert b.is_acknowledged(mid) == False
 
 
+@pytest.mark.parametrize("data_in", data)
+def test_receiveAddress(data_in):
+    a = Comm()
+    b = Comm()
+    a.listen()
+    b.connect(a.port)
+
+    mid = a.send(data_in)
+    src, data_out = b.receive(timeout=0.5)
+
+    assert data_out == data_in
+    assert src == ("127.0.0.1", a.port)
+
+
 if __name__ == '__main__':
-    test_discover() 
+    pass
