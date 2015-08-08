@@ -60,11 +60,16 @@ SER_PICKLE_TEXT = SERIALIZER(protocol="pickle", version=0,
                                 dump=_pickser_text, load=pickle.loads)
 """Pickle serialization using text-compatible protocol."""
 
+SER_BEST = SER_PICKLE_HIGHEST
+"""Best serialization available."""
+
 try:
     _msgpack_ser = partial(msgpack.packb, use_bin_type=True)
     _msgpack_deser = partial(msgpack.unpackb, use_list=False)
     SER_MSGPACK = SERIALIZER(protocol="msgpack", version=msgpack.__version__,
                              dump=_msgpack, load=_msgpack_deser)
+
+    #SER_BEST = SER_MSGPACK
 except NameError:
     pass
 
@@ -107,12 +112,6 @@ INFINITE = None
 class ConnectionError(Exception):
     pass
 
-
-def _print_discovery_error(seeker, opposite, error_str):
-    sys.stderr.write("Error from {opposite}: {error_str}\n".format(
-        opposite=opposite,
-        error_str=error_str,
-    ))
 
 #######################################
 # Server related classes
@@ -188,7 +187,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
 
 class Communicator:
-    """Communicator(self, secure=False, compress=None, serializer=slc.SER_PICKLE_HIGHEST, buffer_cap=slc.INFINITE, timeout=30, retries=INFINITE, protocol="tcp")
+    """Communicator(self, secure=False, compress=None, serializer=slc.SER_BEST, buffer_cap=slc.INFINITE, timeout=30, retries=INFINITE, protocol="tcp")
         
         Builds a new communicator.
 
@@ -209,7 +208,7 @@ class Communicator:
         :param protocol: Underlying protocol to use ('tcp', 'udp', 'icmp'). Only
             'tcp' is supported as of now.
     """
-    def __init__(self, secure=False, compress=None, serializer=SER_PICKLE_HIGHEST,
+    def __init__(self, secure=False, compress=None, serializer=SER_BEST,
                  buffer_cap=INFINITE, timeout=30, retries=INFINITE,
                  protocol="tcp"):
         self.protocol = protocol
@@ -309,12 +308,16 @@ class Communicator:
         self.server_threads[-1].start()
 
         if self.port is None:
-            self.port = [self.servers[-1].socket.getsockname()[1]]
+            self.port = self.servers[-1].socket.getsockname()[1]
+        elif type(self.port) is int:
+            self.port = [self.port, self.servers[-1].socket.getsockname()[1]]
         else:
             self.port.append(self.servers[-1].socket.getsockname()[1])
 
     def advertise(self, name):
         """Advertise the current server on the network.
+
+        *TODO*: Add support for IPv6.
 
         :param name: Name to advertise."""
         assert 'server' in self.state, "The socket is not listening, nothing to advertise."
@@ -353,8 +356,6 @@ class Communicator:
         raise NotImplementedError()
 
     def _prepareData(self, data, target):
-        # TODO: Use messagepack, fallback on pickle
-        # TODO: pickle.HIGHEST_PROTOCOL gives a pretty large output.
         stream = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
         if self.sockets_config[target] & SOCKET_CONFIG.COMPRESS:
             stream = self.compress.comp(stream)
@@ -378,10 +379,9 @@ class Communicator:
         :returns: Message ID. Can be used to determine whether or not this 
             message has been acknowledged by all its recipients.
         """
-        if target is None:
+        if target is ALL:
             targets = self.data_to_send.keys()
-        # TODO: Improve this condition to check if source is a list of targets
-        elif '__iter__' in dir(target) and type(target[0]) is tuple:
+        elif hasattr(target, '__iter__') and type(target[0]) is tuple:
             targets = target
         else:
             targets = [target]
@@ -425,8 +425,7 @@ class Communicator:
 
         if source is None:
             targets = self.data_received.keys()
-        # TODO: Improve this condition to check if source is a list of targets
-        elif '__iter__' in dir(source) and type(source[0]) is tuple:
+        elif hasattr(source, '__iter__') and type(source[0]) is tuple:
             targets = source
         else:
             targets = [source]

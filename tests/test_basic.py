@@ -106,7 +106,6 @@ def test_SendToAllClients(data_in):
 @pytest.mark.parametrize("data_in", data)
 def test_SendToAllServers(data_in):
     # Testing multiple connection sending by a client
-
     a = Comm()
     b = Comm()
     c = Comm()
@@ -121,6 +120,51 @@ def test_SendToAllServers(data_in):
     assert data_in == data_out2
 
     a.shutdown(); b.shutdown(); c.shutdown()
+
+
+@pytest.mark.parametrize("data_in", data)
+def test_SendTarget(data_in):
+    a = Comm()
+    b = Comm()
+    c = Comm()
+    a.listen()
+    b.listen()
+    c.connect(a.port)
+    c.connect(b.port)
+
+    target = ('127.0.0.1', a.port)
+
+    c.send(data_in, target=target)
+    data_out1, data_out2 = a.receive(), b.receive(timeout=0.1)
+    assert data_out1 == data_in
+    assert data_out2 is None
+
+    a.shutdown(); b.shutdown(); c.shutdown()
+
+
+@pytest.mark.parametrize("data_in", data)
+def test_SendMultipleTargets(data_in):
+    a = Comm()
+    b = Comm()
+    c = Comm()
+    d = Comm()
+    a.listen()
+    b.listen()
+    c.listen()
+    d.connect(a.port)
+    d.connect(b.port)
+    d.connect(c.port)
+
+    targets = [('127.0.0.1', a.port), ('127.0.0.1', b.port)]
+
+    d.send(data_in, target=targets)
+    data_out1, data_out2, data_out3 = a.receive(), b.receive(), c.receive(timeout=0.1)
+    assert data_in == data_out1
+    assert data_in == data_out2
+    assert data_out3 is None
+
+    a.shutdown(); b.shutdown(); c.shutdown(); d.shutdown()
+
 
 @pytest.mark.parametrize("data_in1,data_in2", zip(data, second_data))
 def test_SendMultipleData(data_in1, data_in2):
