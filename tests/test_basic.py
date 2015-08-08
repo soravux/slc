@@ -302,7 +302,8 @@ def test_wronglyConfiguredComm():
         b.connect(a.port)
 
 
-def test_disconnect():
+@pytest.mark.parametrize("data_in", data)
+def test_disconnect(data_in):
     a = Comm()
     b = Comm()
     a.listen()
@@ -358,7 +359,8 @@ def test_simultaneousListenConnect():
     raise NotImplementedError()
 
 
-def test_multipleListen():
+@pytest.mark.parametrize("data_in", data)
+def test_multipleListen(data_in):
     a = Comm()
     b = Comm()
 
@@ -374,7 +376,8 @@ def test_multipleListen():
     assert data_in == data_out2
 
 
-def test_asynchronousConnect():
+@pytest.mark.parametrize("data_in", data)
+def test_asynchronousConnect(data_in):
     a = Comm()
     b = Comm()
 
@@ -413,6 +416,22 @@ def test_discover_specific():
 
     a.stopAdvertising()
 
+
+@pytest.mark.parametrize("data_in", data)
+def test_messageID(data_in):
+    a = Comm()
+    b = Comm()
+    a.listen()
+    b.connect(a.port)
+
+    mid = b.send(data_in)
+
+    assert b.is_acknowledged(mid) == False
+
+    data_out = a.receive()
+
+    assert b.is_acknowledged(mid) == True
+    assert data_out == data_in
 
 if __name__ == '__main__':
     test_discover() 
