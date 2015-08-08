@@ -30,10 +30,11 @@ data1, data2 = a.receive(), b.receive()
 
 * Simple, Lightweight and Portable
 * Allows one-to-one and one-to-many (publisher - subscriber) communications
+* Completely decentralized
 * Compression
-* Security
+* Security (Elliptic-curve cryptography using libNACL)
 * Auto-reconnection on connection lost, no message lost
-* Zero Configuration, service discovery
+* Zero configuration service advertisement and discovery
 * Support multiple backends (RDMA, UDP, IGMP, ...) (TODO)
 * Throttling (TODO)
 
