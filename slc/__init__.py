@@ -308,7 +308,10 @@ class Communicator:
         self.server_threads[-1].daemon = True
         self.server_threads[-1].start()
 
-        self.port = self.servers[-1].socket.getsockname()[1]
+        if self.port is None:
+            self.port = [self.servers[-1].socket.getsockname()[1]]
+        else:
+            self.port.append(self.servers[-1].socket.getsockname()[1])
 
     def advertise(self, name):
         """Advertise the current server on the network.
@@ -319,7 +322,8 @@ class Communicator:
             self.stopAdvertising()
         self.advertiser_stop.clear()
         self.advertiser = threading.Thread(target=discovery.advertise,
-            kwargs={'name': name, 'cond': self.advertiser_stop, 'port': })
+            kwargs={'name': name, 'cond': self.advertiser_stop,
+                    'ports': ",".join(str(p) for p in self.port)})
         self.advertiser.daemon = True
         self.advertiser.start()
 
@@ -334,8 +338,9 @@ class Communicator:
 
         :param name: Name to discover. Defaults to discover everything."""
         results = discovery.discover()
-        if type(name) is str:
-            name = name.encode('utf-8')
+        print(results)
+        if type(name) is not str and name is not None:
+            name = name.decode('utf-8')
         return [r for r in results if name is None or r[0] == name]
 
     def forward(self, other_comm):

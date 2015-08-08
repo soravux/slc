@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
+import itertools
 import time
 from select import select
-from socket import socket, AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST, gethostbyname, gethostname
+from socket import (socket, AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST,
+    gethostbyname, gethostname, SO_REUSEADDR)
 
 
 PORT = 60221
@@ -25,25 +27,30 @@ def discover():
     results = []
     while select([s], [], [], 0)[0]:
         data, addr = s.recvfrom(1024)
-        print("Received", data.decode('utf-8'), addr)
-        print(data.startswith(MAGIC))
         if data.startswith(MAGIC):
-            results.append((data[len(MAGIC):], addr))
+            results.append(tuple(itertools.chain.from_iterable((
+                data[len(MAGIC):].decode('utf-8').split(','), (addr[0],)))))
     return results
 
 
-def advertise(name, cond):
+def advertise(name, ports, cond):
     """Advertise until the cond (threading.Event) is set.
 
     This function supposes the packet won't be split, which should be the case
     on a LAN."""
     s = socket(AF_INET, SOCK_DGRAM)
+    s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
     s.bind(('', PORT))
     s.setblocking(0)
     s.settimeout(0.1)
+
+    tosend = MAGIC + (name + "," + ports).encode('utf-8')
 
     while not cond.wait(0.1):
         if select([s], [], [], 0)[0]:
             data, addr = s.recvfrom(1024)
             if data.startswith(MAGIC):
-                s.sendto(MAGIC + name.encode('utf-8'), addr)
+                s.sendto(tosend, addr)
+
+    s.shutdown()
+    s.close()

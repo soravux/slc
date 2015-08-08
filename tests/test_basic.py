@@ -5,7 +5,7 @@ import struct
 import pytest
 
 from slc import Communicator as Comm
-from slc import (COMP_ZLIB_DEFAULT, COMP_ZLIB_MAX, SER_PICKLE)
+from slc import (COMP_ZLIB_DEFAULT, COMP_ZLIB_MAX, SER_PICKLE_HIGHEST)
 
 
 data = [
@@ -347,10 +347,27 @@ def test_discover():
     a = Comm()
     b = Comm()
     a.listen()
-    a.advertise("test_type", "test_name", "test_advertiser")
-    time.sleep(0.5)
-    res = b.discover("test_type", "test_name")
-    print(res)
+    a.advertise("a_test")
+    res = b.discover()
+
+    assert len(res) >= 1
+
+    a.stopAdvertising()
+
+
+def test_discover_specific():
+    a = Comm()
+    b = Comm()
+    c = Comm()
+    a.listen()
+    c.listen()
+    a.advertise("b_test")
+    c.advertise("other_test")
+    res = b.discover("b_test")
+
+    assert len(res) == 1
+
+    a.stopAdvertising()
 
 
 if __name__ == '__main__':
