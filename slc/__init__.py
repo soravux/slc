@@ -151,6 +151,8 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
             if self.server.parent_socket.data_to_send[self.client_address]:
                 self.server.parent_socket.lock.acquire()
                 for data in self.server.parent_socket.data_to_send[self.client_address]:
+                    if self.server.parent_socket.sockets_config[self.client_address] & SOCKET_CONFIG.SECURE:
+                        data = self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
                     self.request.sendall(data)
 
                 self.server.parent_socket.data_awaiting[self.client_address].extend(self.server.parent_socket.data_to_send[self.client_address])
@@ -206,7 +208,7 @@ class Communicator:
         :param serializer: Namedtuple representing the serialization protocol.
             See slc.SERIALIZER.
         :param buffer_cap: Maximum sending buffer capacity. Past this capacity,
-            sending data will block.
+            sending data will block. (*TODO*)
         :param timeout: Timeout in seconds before a connection attempt is
             considered failed.
         :param retries: Number of retries before a socket is considered
@@ -359,8 +361,8 @@ class Communicator:
             name = name.decode('utf-8')
         return [r for r in results if name is None or r[0] == name]
 
-    def forward(self, other_comm):
-        """Move awaiting data to another communicator."""
+    def forward(self, source, target):
+        """Move awaiting messages of `source` to `target`."""
         raise NotImplementedError()
 
     def is_acknowledged(self, message_id, target=ALL):
@@ -379,15 +381,7 @@ class Communicator:
             if message_id in itertools.chain(self.data_awaiting_id[t],
                                              self.data_to_send_id[t]):
                 return False
-        return True   
-
-    def _prepareData(self, data, target):
-        stream = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
-        if self.sockets_config[target] & SOCKET_CONFIG.COMPRESS:
-            stream = self.compress.comp(stream)
-        if self.sockets_config[target] & SOCKET_CONFIG.SECURE:
-            stream = self.crypto_boxes[target].encrypt(stream)
-        return stream
+        return True
 
     def send(self, data, target=ALL, raw=False, _locks=True):
         """send(self, data, target=ALL, raw=False)
@@ -418,12 +412,12 @@ class Communicator:
                 logger.error("Target unknown: {}.".format(t))
                 raise KeyError("Unknown target")
 
-        for t in targets:
-            if not raw:
-                data_serialized = self._prepareData(data, t)
-            else:
-                data_serialized = data
+        if not raw:
+            data_serialized = self.serializer.dump(data)
+        else:
+            data_serialized = data
 
+        for t in targets:
             data_header = struct.pack('!IH', len(data_serialized), self.send_msg_idx[t])
             if _locks:
                 self.lock.acquire()
@@ -576,7 +570,7 @@ class Communicator:
             self.receive_cond.acquire()
             self.receive_cond.notify_all()
             self.receive_cond.release()
-            return msg_source, pickle.loads(data_to_return)
+            return msg_source, self.serializer.load(data_to_return)
 
         self.receive_cond.acquire()
         self.receive_cond.notify_all()
@@ -675,6 +669,8 @@ class Communicator:
                     if self.data_to_send[target]:
                         self.lock.acquire()
                         for data in self.data_to_send[target]:
+                            if self.sockets_config[target] & SOCKET_CONFIG.SECURE:
+                                data = self.crypto_boxes[target].encrypt(data)
                             try:
                                 res = socket_.sendall(data)
                             except (BrokenPipeError, OSError):
