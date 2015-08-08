@@ -323,10 +323,13 @@ class Communicator:
         assert 'server' in self.state, "The socket is not listening, nothing to advertise."
         if self.advertiser:
             self.stopAdvertising()
+
+        ports = [str(self.port)] if not hasattr(self.port, '__iter__') \
+            else [str(p) for p in self.port]
         self.advertiser_stop.clear()
         self.advertiser = threading.Thread(target=discovery.advertise,
             kwargs={'name': name, 'cond': self.advertiser_stop,
-                    'ports': ",".join(str(p) for p in self.port)})
+                    'ports': ",".join(ports)})
         self.advertiser.daemon = True
         self.advertiser.start()
 
