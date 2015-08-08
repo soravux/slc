@@ -418,7 +418,7 @@ def test_discover_specific():
 
 
 @pytest.mark.parametrize("data_in", data)
-def test_messageID(data_in):
+def test_messageIDSimple(data_in):
     a = Comm()
     b = Comm()
     a.listen()
@@ -429,9 +429,26 @@ def test_messageID(data_in):
     assert b.is_acknowledged(mid) == False
 
     data_out = a.receive()
+    b.receive(timeout=0.5)
+    print(b.data_awaiting_id)
 
     assert b.is_acknowledged(mid) == True
     assert data_out == data_in
+
+
+@pytest.mark.parametrize("data_in", data)
+def test_messageIDNonListening(data_in):
+    a = Comm()
+    b = Comm()
+    a.listen()
+    b.connect(a.port)
+    a.shutdown()
+
+    mid = b.send(data_in)
+    b.receive(timeout=0.5)
+
+    assert b.is_acknowledged(mid) == False
+
 
 if __name__ == '__main__':
     test_discover() 

@@ -431,6 +431,7 @@ class Communicator:
             if _locks:
                 self.lock.release()
         self.next_message_id += 1
+        return self.next_message_id - 1
 
     def receive(self, source=ALL, timeout=INFINITE, _locks=True):
         """receive(self, source=ALL, timeout=INFINITE)
