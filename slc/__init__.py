@@ -9,6 +9,7 @@ import socket
 import socketserver
 import pickle
 import zlib
+import itertools
 from functools import partial
 from collections import defaultdict, namedtuple
 
@@ -131,6 +132,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         self.server.parent_socket.lock.acquire()
         self.server.parent_socket.target_addresses.append(self.client_address)
         self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IHB', 0, self.server.parent_socket.send_msg_idx[self.client_address], self.server.parent_socket.config)]
+        self.server.parent_socket.data_to_send_id[self.client_address] = [-1]
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
 
@@ -138,6 +140,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
             our_key = pickle.dumps(security.getOurPublicKey())
             data_size = struct.pack('!IH', len(our_key), 1)
             self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
+            self.server.parent_socket.data_to_send_id[self.client_address].append(-1)
         self.server.parent_socket.lock.release()
 
         self.header_received = False
@@ -150,7 +153,9 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                     self.request.sendall(data)
 
                 self.server.parent_socket.data_awaiting[self.client_address].extend(self.server.parent_socket.data_to_send[self.client_address])
+                self.server.parent_socket.data_awaiting_id[self.client_address].extend(self.server.parent_socket.data_to_send_id[self.client_address])
                 self.server.parent_socket.data_to_send[self.client_address][:] = []
+                self.server.parent_socket.data_to_send_id[self.client_address][:] = []
                 self.server.parent_socket.lock.release()
 
             self.server.parent_socket.lock.acquire()
@@ -176,6 +181,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
     def finish(self):
         try:
             self.server.parent_socket.data_to_send.pop(self)
+            self.server.parent_socket.data_to_send_id.pop(self)
         except KeyError:
             pass
         try:
@@ -226,7 +232,9 @@ class Communicator:
         self.servers = []
         self.poll_delay = 0.1
         self.data_to_send = defaultdict(list)
+        self.data_to_send_id = defaultdict(list)
         self.data_awaiting = defaultdict(list)
+        self.data_awaiting_id = defaultdict(list)
         self.data_received = defaultdict(bytearray)
         self.target_addresses = []
         self.source_addresses = []
@@ -239,6 +247,7 @@ class Communicator:
         self.receive_cond = threading.Condition()
         self.advertiser = None
         self.advertiser_stop = threading.Event()
+        self.next_message_id = 0
 
         if self.secure:
             self.crypto_boxes = {}
@@ -265,6 +274,7 @@ class Communicator:
 
         # Send configuration
         self.data_to_send[target] = []
+        self.data_to_send_id[target] = []
 
         if not self.client_thread:
             self.client_thread = threading.Thread(target=self._clientHandle)
@@ -353,10 +363,21 @@ class Communicator:
         """Move awaiting data to another communicator."""
         raise NotImplementedError()
 
-    def is_acknowledged(self, message_id):
+    def is_acknowledged(self, message_id, target=ALL):
         """Returns if the message represented by `message_id` has been
-        successfully received by the pair."""
-        raise NotImplementedError()
+        successfully received by the pair.
+
+        :param message_id: Message ID provided by `send`.
+        :param target: Check for a given target. If `ALL`, the function will
+            return true only if all targets have acknowledged the message."""
+        if target is ALL:
+            target = list(self.data_awaiting_id.keys())
+
+        for t in target:
+            if message_id in itertools.chain(self.data_awaiting_id[t],
+                                             self.data_to_send_id[t]):
+                return False
+        return True   
 
     def _prepareData(self, data, target):
         stream = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
@@ -406,8 +427,10 @@ class Communicator:
                 self.lock.acquire()
             self.send_msg_idx[t] += 1
             self.data_to_send[t].append(data_header + data_serialized)
+            self.data_to_send_id[t].append(self.next_message_id)
             if _locks:
                 self.lock.release()
+        self.next_message_id += 1
 
     def receive(self, source=ALL, timeout=INFINITE, _locks=True):
         """receive(self, source=ALL, timeout=INFINITE)
@@ -462,14 +485,17 @@ class Communicator:
                     # Send missed packets during disconnection
                     data_waiting_begin = (send_idx - len_send) - msg_idx
                     del self.data_awaiting[target][:data_waiting_begin]
-                    for x in self.data_awaiting[target]:
+                    del self.data_awaiting_id[target][:data_waiting_begin]
+                    for idx, x in enumerate(self.data_awaiting[target]):
                         # Do not resend header
                         resend_data_size, resend_msg_idx = struct.unpack('!IH', x[:config_size])
                         if resend_data_size != 0 and (resend_msg_idx > 1 or not self.secure):
                             logger = logging.getLogger("slc")
                             logger.warning('Sending a message again...')
                             self.data_to_send[target].append(x)
+                            self.data_to_send_id[target].append(self.data_awaiting_id[target][idx])
                     del self.data_awaiting[target][:]
+                    del self.data_awaiting_id[target][:]
 
                     if _locks:
                         self.lock.release()
@@ -483,6 +509,7 @@ class Communicator:
                     self.nbr_msg_acked[target] += 1
                     try:
                         self.data_awaiting[target].pop(0)
+                        self.data_awaiting_id[target].pop(0)
                     except IndexError:
                         # It is the public encryption key (not in data_awaiting)
                         pass
@@ -502,6 +529,7 @@ class Communicator:
 
                     # Send ack packet
                     self.data_to_send[target].append(struct.pack('!IH', 1, msg_idx))
+                    self.data_to_send_id[target].append(-1)
                     break
             else:
                 if _locks:
@@ -586,7 +614,9 @@ class Communicator:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
                     self.data_to_send[target].extend(self.data_awaiting[target])
+                    self.data_to_send_id[target].extend(self.data_awaiting_id[target])
                     self.data_awaiting[target][:] = []
+                    self.data_awaiting_id[target][:] = []
                     try:
                         self.sockets[target] = socket.create_connection(target,
                                                                         timeout=5,
@@ -603,11 +633,13 @@ class Communicator:
                     # Send SLC header
                     self.lock.acquire()
                     self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.recv_msg_idx[target], self.config))
+                    self.data_to_send_id[target].insert(0, -1)
 
                     if self.secure:
                         our_key = pickle.dumps(security.getOurPublicKey())
                         data_size = struct.pack('!IH', len(our_key), 1)
                         self.data_to_send[target].insert(1, data_size + our_key)
+                        self.data_to_send_id[target].insert(1, -1)
                     self.lock.release()
 
                 sockets_to_remove = []
@@ -644,7 +676,9 @@ class Communicator:
                                 break
                         else:
                             self.data_awaiting[target].extend(self.data_to_send[target])
+                            self.data_awaiting_id[target].extend(self.data_to_send_id[target])
                             self.data_to_send[target][:] = []
+                            self.data_to_send_id[target][:] = []
                         self.lock.release()
 
                 for sock in sockets_to_remove:
