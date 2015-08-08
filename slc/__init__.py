@@ -416,7 +416,7 @@ class Communicator:
             if t not in self.target_addresses:
                 logger = logging.getLogger("slc")
                 logger.error("Target unknown: {}.".format(t))
-                raise Exception("Unknown source")
+                raise KeyError("Unknown target")
 
         for t in targets:
             if not raw:
@@ -472,7 +472,7 @@ class Communicator:
             if target not in self.target_addresses:
                 logger = logging.getLogger("slc")
                 logger.error("Target unknown: {}.".format(target))
-                raise Exception("Unknown source")
+                raise KeyError("Unknown source")
 
         while True:
             if _locks:
