@@ -4,7 +4,7 @@ import itertools
 import time
 from select import select
 from socket import (socket, AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST,
-    gethostbyname, gethostname, SO_REUSEADDR)
+    gethostbyname, gethostname, SO_REUSEADDR, SHUT_RDWR)
 
 
 PORT = 60221
@@ -52,5 +52,5 @@ def advertise(name, ports, cond):
             if data.startswith(MAGIC):
                 s.sendto(tosend, addr)
 
-    s.shutdown()
+    s.shutdown(SHUT_RDWR)
     s.close()
