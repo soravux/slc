@@ -132,16 +132,15 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
     def setup(self):
         self.server.parent_socket.lock.acquire()
         self.server.parent_socket.target_addresses.append(self.client_address)
-        self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!IHB', 0, self.server.parent_socket.send_msg_idx[self.client_address], self.server.parent_socket.config)]
-        self.server.parent_socket.data_to_send_id[self.client_address] = [-1]
+        self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!B', self.server.parent_socket.config)]
+        self.server.parent_socket.data_to_send_id[self.client_address] = [-3]
         self.request.setblocking(0)
         self.server.parent_socket.sockets[self.client_address] = self.request
 
         if self.server.parent_socket.secure:
             our_key = pickle.dumps(security.getOurPublicKey())
-            data_size = struct.pack('!IH', len(our_key), 1)
-            self.server.parent_socket.data_to_send[self.client_address].append(data_size + our_key)
-            self.server.parent_socket.data_to_send_id[self.client_address].append(-1)
+            self.server.parent_socket.data_to_send[self.client_address].append(our_key)
+            self.server.parent_socket.data_to_send_id[self.client_address].append(-2)
         self.server.parent_socket.lock.release()
 
         self.header_received = False
@@ -149,16 +148,36 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
     def handle(self):
         while not self.server.shutdown_requested_why_is_this_variable_mangled_by_default:
             if self.server.parent_socket.data_to_send[self.client_address]:
+                to_delete = []
                 self.server.parent_socket.lock.acquire()
-                for data in self.server.parent_socket.data_to_send[self.client_address]:
-                    if self.server.parent_socket.sockets_config[self.client_address] & SOCKET_CONFIG.SECURE:
-                        data = self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
+                for idx, data in enumerate(self.server.parent_socket.data_to_send[self.client_address]):
+                    not_header = self.server.parent_socket.data_to_send_id[self.client_address][idx] >= 0
+                    if self.server.parent_socket.sockets_config[self.client_address] & SOCKET_CONFIG.SECURE and not_header:
+                        try:
+                            data = data + self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
+                        except KeyError:
+                            continue
+                    
+                    if self.server.parent_socket.data_to_send_id[self.client_address][idx] == -3:
+                        data_header = struct.pack('!IH', 0, self.server.parent_socket.send_msg_idx[self.client_address])
+                        self.server.parent_socket.send_msg_idx[self.client_address] += 1
+                    elif self.server.parent_socket.data_to_send_id[self.client_address][idx] == -1:
+                        data_header = b""
+                    else:
+                        data_header = struct.pack('!IH', len(data), self.server.parent_socket.send_msg_idx[self.client_address])
+                        self.server.parent_socket.send_msg_idx[self.client_address] += 1
+                    
+                    if data_header:
+                        self.request.sendall(data_header)
                     self.request.sendall(data)
-
-                self.server.parent_socket.data_awaiting[self.client_address].extend(self.server.parent_socket.data_to_send[self.client_address])
-                self.server.parent_socket.data_awaiting_id[self.client_address].extend(self.server.parent_socket.data_to_send_id[self.client_address])
-                self.server.parent_socket.data_to_send[self.client_address][:] = []
-                self.server.parent_socket.data_to_send_id[self.client_address][:] = []
+                    
+                    to_delete.append(idx)
+                for idx in to_delete:
+                    self.server.parent_socket.data_awaiting[self.client_address].append(self.server.parent_socket.data_to_send[self.client_address][idx])
+                    self.server.parent_socket.data_awaiting_id[self.client_address].append(self.server.parent_socket.data_to_send_id[self.client_address][idx])
+                for idx in reversed(to_delete):
+                    self.server.parent_socket.data_to_send[self.client_address].pop(idx)
+                    self.server.parent_socket.data_to_send_id[self.client_address].pop(idx)
                 self.server.parent_socket.lock.release()
 
             self.server.parent_socket.lock.acquire()
@@ -229,11 +248,11 @@ class Communicator:
         self.sockets = {}
         self.client_header_received = defaultdict(bool)
         self.sockets_config = defaultdict(int)
-        self.send_msg_idx = defaultdict(partial(int, 2))
+        self.send_msg_idx = defaultdict(partial(int, 0))
         self.recv_msg_idx = defaultdict(int)
         self.nbr_msg_acked = defaultdict(int)
         self.servers = []
-        self.poll_delay = 0.1
+        self.poll_delay = 0.05
         self.data_to_send = defaultdict(list)
         self.data_to_send_id = defaultdict(list)
         self.data_awaiting = defaultdict(list)
@@ -418,11 +437,9 @@ class Communicator:
             data_serialized = data
 
         for t in targets:
-            data_header = struct.pack('!IH', len(data_serialized), self.send_msg_idx[t])
             if _locks:
                 self.lock.acquire()
-            self.send_msg_idx[t] += 1
-            self.data_to_send[t].append(data_header + data_serialized)
+            self.data_to_send[t].append(data_serialized)
             self.data_to_send_id[t].append(self.next_message_id)
             if _locks:
                 self.lock.release()
@@ -450,6 +467,7 @@ class Communicator:
 
         :returns: src, obj
         """
+        global config_size, config_header_size
         ts_begin = time.time()
         data_to_return = None
         config_size = 6
@@ -481,7 +499,9 @@ class Communicator:
                 except struct.error as e:
                     continue
 
-                if data_size == 0 and len(self.data_received[target]) >= config_header_size:
+                if data_size == 0:
+                    if len(self.data_received[target]) < config_header_size:
+                        continue
                     # data_size == 0 means header
                     preliminary_config = struct.unpack('!B', self.data_received[target][config_size:config_header_size])[0]
                     assert preliminary_config == self.config, "Both sockets must have the same configuration."
@@ -500,8 +520,8 @@ class Communicator:
                             logger.warning('Sending a message again...')
                             self.data_to_send[target].append(x)
                             self.data_to_send_id[target].append(self.data_awaiting_id[target][idx])
-                    del self.data_awaiting[target][:]
-                    del self.data_awaiting_id[target][:]
+                    self.data_awaiting[target][:] = []
+                    self.data_awaiting_id[target][:] = []
 
                     if _locks:
                         self.lock.release()
@@ -513,12 +533,8 @@ class Communicator:
                 elif data_size == 1:
                     # data_size == 1 means ack
                     self.nbr_msg_acked[target] += 1
-                    try:
-                        self.data_awaiting[target].pop(0)
-                        self.data_awaiting_id[target].pop(0)
-                    except IndexError:
-                        # It is the public encryption key (not in data_awaiting)
-                        pass
+                    self.data_awaiting[target].pop(0)
+                    self.data_awaiting_id[target].pop(0)
                     self.data_received[target] = self.data_received[target][config_size:]
                     continue
 
@@ -547,7 +563,7 @@ class Communicator:
                     pass
 
                 if 'client' in self.state:
-                    assert self.client_thread, "Client thread could not be launched unexpectedly."
+                    assert self.client_thread, "Client thread could not be launched."
                     assert self.client_thread.is_alive(), "Client thread terminated unexpectedly."
                 for thread in self.server_threads:
                     assert thread.is_alive(), "Server thread terminated unexpectedly."
@@ -627,7 +643,7 @@ class Communicator:
                         self.sockets[target] = socket.create_connection(target,
                                                                         timeout=5,
                                                                         source_address=self.source_addresses[idx])
-                    except ConnectionRefusedError as e:
+                    except Exception as e:
                         logger = logging.getLogger("slc")
                         logger.warning("Could not connect to: {}.\n{}".format(target, e))
                         continue
@@ -638,14 +654,13 @@ class Communicator:
 
                     # Send SLC header
                     self.lock.acquire()
-                    self.data_to_send[target].insert(0, struct.pack('!IHB', 0, self.recv_msg_idx[target], self.config))
-                    self.data_to_send_id[target].insert(0, -1)
+                    self.data_to_send[target].insert(0, struct.pack('!B', self.config))
+                    self.data_to_send_id[target].insert(0, -3)
 
                     if self.secure:
                         our_key = pickle.dumps(security.getOurPublicKey())
-                        data_size = struct.pack('!IH', len(our_key), 1)
-                        self.data_to_send[target].insert(1, data_size + our_key)
-                        self.data_to_send_id[target].insert(1, -1)
+                        self.data_to_send[target].insert(1, our_key)
+                        self.data_to_send_id[target].insert(1, -2)
                     self.lock.release()
 
                 sockets_to_remove = []
@@ -667,11 +682,32 @@ class Communicator:
                         break
 
                     if self.data_to_send[target]:
+                        to_delete = []
                         self.lock.acquire()
-                        for data in self.data_to_send[target]:
-                            if self.sockets_config[target] & SOCKET_CONFIG.SECURE:
-                                data = self.crypto_boxes[target].encrypt(data)
+                        for idx, data in enumerate(self.data_to_send[target]):
+                            # Add encryption if activated
+                            not_header = self.data_to_send_id[target][idx] >= 0
+                            if self.sockets_config[target] & SOCKET_CONFIG.SECURE and not_header:
+                                try:
+                                    data = self.crypto_boxes[target].encrypt(data)
+                                except KeyError:
+                                    # remote key not received
+                                    continue
+
+                            # Add the header
+                            if self.data_to_send_id[target][idx] == -3:
+                                data_header = struct.pack('!IH', 0, self.send_msg_idx[target])
+                                self.send_msg_idx[target] += 1
+                            elif self.data_to_send_id[target][idx] == -1:
+                                data_header = b""
+                            else:
+                                data_header = struct.pack('!IH', len(data), self.send_msg_idx[target])
+                                self.send_msg_idx[target] += 1
+
+                            # Send the data
                             try:
+                                if data_header:
+                                    res = socket_.sendall(data_header)
                                 res = socket_.sendall(data)
                             except (BrokenPipeError, OSError):
                                 try:
@@ -682,11 +718,13 @@ class Communicator:
                                     pass
                                 sockets_to_remove.append(target)
                                 break
-                        else:
-                            self.data_awaiting[target].extend(self.data_to_send[target])
-                            self.data_awaiting_id[target].extend(self.data_to_send_id[target])
-                            self.data_to_send[target][:] = []
-                            self.data_to_send_id[target][:] = []
+                            to_delete.append(idx)
+                        for idx in to_delete:
+                            self.data_awaiting[target].append(self.data_to_send[target][idx])
+                            self.data_awaiting_id[target].append(self.data_to_send_id[target][idx])
+                        for idx in reversed(to_delete):
+                            self.data_to_send[target].pop(idx)
+                            self.data_to_send_id[target].pop(idx)
                         self.lock.release()
 
                 for sock in sockets_to_remove:
@@ -711,6 +749,5 @@ class Communicator:
                     self.lock.release()
             try:
                 _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
-                # ValueError: file descriptor cannot be a negative integer (-1) => Validate
             except (OSError, ValueError):
                 pass
