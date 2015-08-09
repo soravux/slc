@@ -436,6 +436,9 @@ class Communicator:
         else:
             data_serialized = data
 
+        if self.compressed:
+            data_serialized = self.compress.comp(data_serialized)
+
         for t in targets:
             if _locks:
                 self.lock.acquire()
