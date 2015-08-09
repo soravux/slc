@@ -264,7 +264,7 @@ def test_CreateTwoServersBackToBack():
 
 
 @pytest.mark.parametrize("data_in", data)
-def test_Security(data_in):
+def test_security(data_in):
     a = Comm(secure=True)
     b = Comm(secure=True)
 
