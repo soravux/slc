@@ -165,6 +165,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                         self.server.parent_socket.send_msg_idx[self.client_address] += 1
                     elif self.server.parent_socket.data_to_send_id[self.client_address][idx] == -1:
                         data_header = b""
+                        msg_idx.append(None)
                     else:
                         data_header = struct.pack('!IH', len(data), self.server.parent_socket.send_msg_idx[self.client_address])
                         msg_idx.append((len(data), self.server.parent_socket.send_msg_idx[self.client_address]))
@@ -176,8 +177,9 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                     
                     to_delete.append(idx)
                 for id_idx, idx in enumerate(to_delete):
-                    self.server.parent_socket.data_awaiting[self.client_address].append((msg_idx[id_idx], self.server.parent_socket.data_to_send[self.client_address][idx]))
-                    self.server.parent_socket.data_awaiting_id[self.client_address].append(self.server.parent_socket.data_to_send_id[self.client_address][idx])
+                    if msg_idx[id_idx]:
+                        self.server.parent_socket.data_awaiting[self.client_address].append((msg_idx[id_idx], self.server.parent_socket.data_to_send[self.client_address][idx]))
+                        self.server.parent_socket.data_awaiting_id[self.client_address].append(self.server.parent_socket.data_to_send_id[self.client_address][idx])
                 for idx in reversed(to_delete):
                     self.server.parent_socket.data_to_send[self.client_address].pop(idx)
                     self.server.parent_socket.data_to_send_id[self.client_address].pop(idx)
@@ -342,12 +344,14 @@ class Communicator:
         self.server_threads[-1].daemon = True
         self.server_threads[-1].start()
 
+        self.lock.acquire()
         if self.port is None:
             self.port = self.servers[-1].socket.getsockname()[1]
         elif type(self.port) is int:
             self.port = [self.port, self.servers[-1].socket.getsockname()[1]]
         else:
             self.port.append(self.servers[-1].socket.getsockname()[1])
+        self.lock.release()
 
     def advertise(self, name):
         """Advertise the current server on the network.
@@ -539,8 +543,8 @@ class Communicator:
                 elif data_size == 1:
                     # data_size == 1 means ack
                     self.nbr_msg_acked[target] += 1
-                    self.data_awaiting[target].pop(0)
-                    self.data_awaiting_id[target].pop(0)
+                    #self.data_awaiting[target].pop(0)
+                    #self.data_awaiting_id[target].pop(0)
                     self.data_received[target] = self.data_received[target][config_size:]
                     continue
 
@@ -637,6 +641,27 @@ class Communicator:
             time.sleep(0.1)
             socket_.close()
 
+
+    def _clientUpdatePorts(self):
+        """Updates the ports variable according to the client sockets."""
+        self.lock.acquire()
+        for target, socket_ in self.sockets.items():
+            try:
+                this_port = socket_.getsockname()[1]
+            except (OSError, ValueError, socket.error):
+                continue
+
+            if self.port == this_port or (hasattr(self.port, '__iter__') and this_port in self.port):
+                continue
+            
+            if self.port is None:
+                self.port = this_port
+            elif type(self.port) is int:
+                self.port = [self.port, this_port]
+            else:
+                self.port.append(this_port)
+        self.lock.release()
+
     def _clientHandle(self):
         while 'client' in self.state:
             for idx, target in enumerate(self.target_addresses):
@@ -681,7 +706,7 @@ class Communicator:
                         logger = logging.getLogger("slc")
                         logger.warning("{} disconnected from {}.".format(self.port, target))
                         try:
-                            socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                            socket_.shutdown(socket.SHUT_RDWR)
                             socket_.close()
                         except OSError:
                             # Socket was already closed
@@ -710,6 +735,7 @@ class Communicator:
                                 self.send_msg_idx[target] += 1
                             elif self.data_to_send_id[target][idx] == -1:
                                 data_header = b""
+                                msg_idx.append(None)
                             else:
                                 data_header = struct.pack('!IH', len(data), self.send_msg_idx[target])
                                 msg_idx.append((len(data), self.send_msg_idx[target]))
@@ -722,7 +748,7 @@ class Communicator:
                                 res = socket_.sendall(data)
                             except (BrokenPipeError, OSError):
                                 try:
-                                    socket_.shutdown(2)    # 0 = done receiving, 1 = done sending, 2 = both
+                                    socket_.shutdown(socket.SHUT_RDWR)
                                     socket_.close()
                                 except OSError:
                                     # Socket was already closed
@@ -731,8 +757,9 @@ class Communicator:
                                 break
                             to_delete.append(idx)
                         for id_idx, idx in enumerate(to_delete):
-                            self.data_awaiting[target].append((msg_idx[id_idx], self.data_to_send[target][idx]))
-                            self.data_awaiting_id[target].append(self.data_to_send_id[target][idx])
+                            if msg_idx[id_idx]:
+                                self.data_awaiting[target].append((msg_idx[id_idx], self.data_to_send[target][idx]))
+                                self.data_awaiting_id[target].append(self.data_to_send_id[target][idx])
                         for idx in reversed(to_delete):
                             self.data_to_send[target].pop(idx)
                             self.data_to_send_id[target].pop(idx)
@@ -758,6 +785,9 @@ class Communicator:
                             self.crypto_boxes[target] = security.getBox(source_key, target)
 
                     self.lock.release()
+            
+            self._clientUpdatePorts()
+
             try:
                 _, _, _ = select.select(self.sockets.values(), [], [], self.poll_delay)
             except (OSError, ValueError):
