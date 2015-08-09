@@ -10,6 +10,7 @@ import socketserver
 import pickle
 import zlib
 import itertools
+import traceback
 from functools import partial
 from collections import defaultdict, namedtuple
 
@@ -155,10 +156,10 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                     not_header = self.server.parent_socket.data_to_send_id[self.client_address][idx] >= 0
                     if self.server.parent_socket.sockets_config[self.client_address] & SOCKET_CONFIG.SECURE and not_header:
                         try:
-                            data = data + self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
+                            data = self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
                         except KeyError:
                             continue
-                    
+
                     if self.server.parent_socket.data_to_send_id[self.client_address][idx] == -3:
                         data_header = struct.pack('!IH', 0, self.server.parent_socket.send_msg_idx[self.client_address])
                         msg_idx.append((0, self.server.parent_socket.send_msg_idx[self.client_address]))
@@ -170,11 +171,11 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                         data_header = struct.pack('!IH', len(data), self.server.parent_socket.send_msg_idx[self.client_address])
                         msg_idx.append((len(data), self.server.parent_socket.send_msg_idx[self.client_address]))
                         self.server.parent_socket.send_msg_idx[self.client_address] += 1
-                    
+
                     if data_header:
                         self.request.sendall(data_header)
                     self.request.sendall(data)
-                    
+
                     to_delete.append(idx)
                 for id_idx, idx in enumerate(to_delete):
                     if msg_idx[id_idx]:
@@ -517,10 +518,15 @@ class Communicator:
                     assert preliminary_config == self.config, "Both sockets must have the same configuration."
                     self.data_received[target] = self.data_received[target][config_header_size:]
                     self.sockets_config[target] = preliminary_config
-                    
+
                     self.receive_cond.acquire()
                     self.receive_cond.notify_all()
                     self.receive_cond.release()
+
+                    # Send ack packet
+                    self.data_to_send[target].append(struct.pack('!IH', 1, msg_idx))
+                    self.data_to_send_id[target].append(-1)
+
                     if not _locks:
                         return True # Move that and the previous if elsewhere?
                     continue
@@ -528,15 +534,13 @@ class Communicator:
                 elif data_size == 1:
                     # data_size == 1 means ack
                     self.nbr_msg_acked[target] += 1
-                    acked = [idx for idx, m in enumerate(self.data_awaiting[target]) if m[0] == msg_idx]
+                    acked = [idx for idx, m in enumerate(self.data_awaiting[target]) if m[0][1] == msg_idx]
                     for acked_i in reversed(acked):
                         self.data_awaiting[target].pop(acked_i)
                         self.data_awaiting_id[target].pop(acked_i)
                     if not acked:
                         logger = logging.getLogger("slc")
-                        logger.warning('We received an acknowledgement for a packet we were not awaiting...')
-                    #while msg_idx in self.data_awaiting_id[target]:
-                    #    self.data_awaiting_id[target].remove(msg_idx)
+                        logger.warning('We received an acknowledgement for a packet we were not awaiting: {0}'.format(msg_idx))
                     self.data_received[target] = self.data_received[target][config_size:]
                     continue
 
@@ -684,7 +688,7 @@ class Communicator:
                     self.data_to_send_id[target].insert(0, -3)
 
                     if self.secure:
-                        our_key = pickle.dumps(security.getOurPublicKey())
+                        our_key = self.serializer.dump(security.getOurPublicKey())
                         self.data_to_send[target].insert(1, our_key)
                         self.data_to_send_id[target].insert(1, -2)
                     self.lock.release()
