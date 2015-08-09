@@ -485,17 +485,20 @@ class Communicator:
         config_header_size = config_size + 1
 
         if source is None:
-            targets = self.data_received.keys()
+            targets = list(self.data_received.keys())
         elif hasattr(source, '__iter__') and type(source[0]) is tuple:
             targets = source
         else:
             targets = [source]
 
+        not_target = []
         for target in targets:
             if target not in self.target_addresses:
                 logger = logging.getLogger("slc")
-                logger.error("Target unknown: {}.".format(target))
-                raise KeyError("Unknown source")
+                logger.warning("Source unknown: {}.".format(target))
+                not_target.append(target)
+        for t in not_target:
+            targets.remove(t)
 
         while True:
             if _locks:

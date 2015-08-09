@@ -468,11 +468,9 @@ def test_messageIDSimple(data_in):
     assert b.is_acknowledged(mid) == False
 
     data_out = a.recv(timeout=0.5)
-    print(b.data_awaiting_id)
     b.recv(timeout=0.5)
 
     assert data_out == data_in
-    print(b.data_awaiting_id)
     assert b.is_acknowledged(mid) == True
 
 
@@ -488,6 +486,31 @@ def test_messageIDNonListening(data_in):
     b.recv(timeout=0.5)
 
     assert b.is_acknowledged(mid) == False
+
+
+@pytest.mark.parametrize("data_in", data)
+def test_messageIDInterruption(data_in):
+    a = Comm()
+    b = Comm()
+    a.listen()
+    serv_port = a.port
+    b.connect(serv_port)
+    a.shutdown()
+
+    mid = b.send(data_in)
+    b.recv(timeout=0.5)
+
+    assert b.is_acknowledged(mid) == False
+
+    a.listen(serv_port)
+    b.recv(timeout=0.5)
+
+    assert b.is_acknowledged(mid) == False
+
+    a.recv(timeout=0.5)
+    b.recv(timeout=0.5)
+
+    assert b.is_acknowledged(mid) == True
 
 
 @pytest.mark.parametrize("data_in", data)
