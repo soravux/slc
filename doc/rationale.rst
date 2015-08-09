@@ -32,4 +32,4 @@ Other message queuing libraires, as `snakemq <http://www.snakemq.net/>`_ are cer
 SLC vs Twisted
 --------------
 
-To do.
+Event-driven frameworks such as Twisted allows the developers to focus on what to do with the data once it arrives. This is perfect for web-based applications or similar, but in an application where networking is only a part of the solution, this paradigm may be an hinderance. The framework requires the developper to use its internal run or loop function to handle the events, which can be quite limiting compared to bare sockets.
