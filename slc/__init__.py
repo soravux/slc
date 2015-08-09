@@ -149,6 +149,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
         while not self.server.shutdown_requested_why_is_this_variable_mangled_by_default:
             if self.server.parent_socket.data_to_send[self.client_address]:
                 to_delete = []
+                msg_idx = []
                 self.server.parent_socket.lock.acquire()
                 for idx, data in enumerate(self.server.parent_socket.data_to_send[self.client_address]):
                     not_header = self.server.parent_socket.data_to_send_id[self.client_address][idx] >= 0
@@ -160,11 +161,13 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                     
                     if self.server.parent_socket.data_to_send_id[self.client_address][idx] == -3:
                         data_header = struct.pack('!IH', 0, self.server.parent_socket.send_msg_idx[self.client_address])
+                        msg_idx.append((0, self.server.parent_socket.send_msg_idx[self.client_address]))
                         self.server.parent_socket.send_msg_idx[self.client_address] += 1
                     elif self.server.parent_socket.data_to_send_id[self.client_address][idx] == -1:
                         data_header = b""
                     else:
                         data_header = struct.pack('!IH', len(data), self.server.parent_socket.send_msg_idx[self.client_address])
+                        msg_idx.append((len(data), self.server.parent_socket.send_msg_idx[self.client_address]))
                         self.server.parent_socket.send_msg_idx[self.client_address] += 1
                     
                     if data_header:
@@ -172,8 +175,8 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
                     self.request.sendall(data)
                     
                     to_delete.append(idx)
-                for idx in to_delete:
-                    self.server.parent_socket.data_awaiting[self.client_address].append(self.server.parent_socket.data_to_send[self.client_address][idx])
+                for id_idx, idx in enumerate(to_delete):
+                    self.server.parent_socket.data_awaiting[self.client_address].append((msg_idx[id_idx], self.server.parent_socket.data_to_send[self.client_address][idx]))
                     self.server.parent_socket.data_awaiting_id[self.client_address].append(self.server.parent_socket.data_to_send_id[self.client_address][idx])
                 for idx in reversed(to_delete):
                     self.server.parent_socket.data_to_send[self.client_address].pop(idx)
@@ -517,11 +520,11 @@ class Communicator:
                     del self.data_awaiting_id[target][:data_waiting_begin]
                     for idx, x in enumerate(self.data_awaiting[target]):
                         # Do not resend header
-                        resend_data_size, resend_msg_idx = struct.unpack('!IH', x[:config_size])
+                        resend_data_size, resend_msg_idx = x[0]
                         if resend_data_size != 0 and (resend_msg_idx > 1 or not self.secure):
                             logger = logging.getLogger("slc")
                             logger.warning('Sending a message again...')
-                            self.data_to_send[target].append(x)
+                            self.data_to_send[target].append(x[1])
                             self.data_to_send_id[target].append(self.data_awaiting_id[target][idx])
                     self.data_awaiting[target][:] = []
                     self.data_awaiting_id[target][:] = []
@@ -638,7 +641,9 @@ class Communicator:
         while 'client' in self.state:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
-                    self.data_to_send[target].extend(self.data_awaiting[target])
+                    awaiting_data = tuple(zip(*self.data_awaiting[target]))
+                    if len(awaiting_data) > 0:
+                        self.data_to_send[target].extend(awaiting_data[1])
                     self.data_to_send_id[target].extend(self.data_awaiting_id[target])
                     self.data_awaiting[target][:] = []
                     self.data_awaiting_id[target][:] = []
@@ -686,6 +691,7 @@ class Communicator:
 
                     if self.data_to_send[target]:
                         to_delete = []
+                        msg_idx = []
                         self.lock.acquire()
                         for idx, data in enumerate(self.data_to_send[target]):
                             # Add encryption if activated
@@ -700,11 +706,13 @@ class Communicator:
                             # Add the header
                             if self.data_to_send_id[target][idx] == -3:
                                 data_header = struct.pack('!IH', 0, self.send_msg_idx[target])
+                                msg_idx.append((0, self.send_msg_idx[target]))
                                 self.send_msg_idx[target] += 1
                             elif self.data_to_send_id[target][idx] == -1:
                                 data_header = b""
                             else:
                                 data_header = struct.pack('!IH', len(data), self.send_msg_idx[target])
+                                msg_idx.append((len(data), self.send_msg_idx[target]))
                                 self.send_msg_idx[target] += 1
 
                             # Send the data
@@ -722,8 +730,8 @@ class Communicator:
                                 sockets_to_remove.append(target)
                                 break
                             to_delete.append(idx)
-                        for idx in to_delete:
-                            self.data_awaiting[target].append(self.data_to_send[target][idx])
+                        for id_idx, idx in enumerate(to_delete):
+                            self.data_awaiting[target].append((msg_idx[id_idx], self.data_to_send[target][idx]))
                             self.data_awaiting_id[target].append(self.data_to_send_id[target][idx])
                         for idx in reversed(to_delete):
                             self.data_to_send[target].pop(idx)
