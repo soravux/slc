@@ -517,34 +517,26 @@ class Communicator:
                     assert preliminary_config == self.config, "Both sockets must have the same configuration."
                     self.data_received[target] = self.data_received[target][config_header_size:]
                     self.sockets_config[target] = preliminary_config
-
-                    # Send missed packets during disconnection
-                    data_waiting_begin = (send_idx - len_send) - msg_idx
-                    del self.data_awaiting[target][:data_waiting_begin]
-                    del self.data_awaiting_id[target][:data_waiting_begin]
-                    for idx, x in enumerate(self.data_awaiting[target]):
-                        # Do not resend header
-                        resend_data_size, resend_msg_idx = x[0]
-                        if resend_data_size != 0 and (resend_msg_idx > 1 or not self.secure):
-                            logger = logging.getLogger("slc")
-                            logger.warning('Sending a message again...')
-                            self.data_to_send[target].append(x[1])
-                            self.data_to_send_id[target].append(self.data_awaiting_id[target][idx])
-                    self.data_awaiting[target][:] = []
-                    self.data_awaiting_id[target][:] = []
-
-                    if _locks:
-                        self.lock.release()
+                    
                     self.receive_cond.acquire()
                     self.receive_cond.notify_all()
                     self.receive_cond.release()
-                    return True # Move that and the previous if elsewhere?
+                    if not _locks:
+                        return True # Move that and the previous if elsewhere?
+                    continue
 
                 elif data_size == 1:
                     # data_size == 1 means ack
                     self.nbr_msg_acked[target] += 1
-                    #self.data_awaiting[target].pop(0)
-                    #self.data_awaiting_id[target].pop(0)
+                    acked = [idx for idx, m in enumerate(self.data_awaiting[target]) if m[0] == msg_idx]
+                    for acked_i in reversed(acked):
+                        self.data_awaiting[target].pop(acked_i)
+                        self.data_awaiting_id[target].pop(acked_i)
+                    if not acked:
+                        logger = logging.getLogger("slc")
+                        logger.warning('We received an acknowledgement for a packet we were not awaiting...')
+                    #while msg_idx in self.data_awaiting_id[target]:
+                    #    self.data_awaiting_id[target].remove(msg_idx)
                     self.data_received[target] = self.data_received[target][config_size:]
                     continue
 
@@ -641,7 +633,6 @@ class Communicator:
             time.sleep(0.1)
             socket_.close()
 
-
     def _clientUpdatePorts(self):
         """Updates the ports variable according to the client sockets."""
         self.lock.acquire()
@@ -666,12 +657,14 @@ class Communicator:
         while 'client' in self.state:
             for idx, target in enumerate(self.target_addresses):
                 if not target in self.sockets:
+                    # Resend data that was not acknowledged when socket is lost.
                     awaiting_data = tuple(zip(*self.data_awaiting[target]))
                     if len(awaiting_data) > 0:
                         self.data_to_send[target].extend(awaiting_data[1])
                     self.data_to_send_id[target].extend(self.data_awaiting_id[target])
                     self.data_awaiting[target][:] = []
                     self.data_awaiting_id[target][:] = []
+
                     try:
                         self.sockets[target] = socket.create_connection(target,
                                                                         timeout=5,
