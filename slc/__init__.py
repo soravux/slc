@@ -48,7 +48,7 @@ SERIALIZER = namedtuple("serializer", "protocol, version, dump, load")
 
 :param protocol: Protocol name.
 :param version: Protocol version.
-:param dumps: Callable that performs the serialization. Use a `partial` to 
+:param dumps: Callable that performs the serialization. Use a `partial` to
     specify the function arguments.
 :param loads: Callable that performs the reverse serialization.
 """
@@ -131,18 +131,17 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class SocketserverHandler(socketserver.BaseRequestHandler):
     def setup(self):
-        self.server.parent_socket.lock.acquire()
-        self.server.parent_socket.target_addresses.append(self.client_address)
-        self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!B', self.server.parent_socket.config)]
-        self.server.parent_socket.data_to_send_id[self.client_address] = [-3]
-        self.request.setblocking(0)
-        self.server.parent_socket.sockets[self.client_address] = self.request
+        with self.server.parent_socket.lock:
+            self.server.parent_socket.target_addresses.append(self.client_address)
+            self.server.parent_socket.data_to_send[self.client_address] = [struct.pack('!B', self.server.parent_socket.config)]
+            self.server.parent_socket.data_to_send_id[self.client_address] = [-3]
+            self.request.setblocking(0)
+            self.server.parent_socket.sockets[self.client_address] = self.request
 
-        if self.server.parent_socket.secure:
-            our_key = pickle.dumps(security.getOurPublicKey())
-            self.server.parent_socket.data_to_send[self.client_address].append(our_key)
-            self.server.parent_socket.data_to_send_id[self.client_address].append(-2)
-        self.server.parent_socket.lock.release()
+            if self.server.parent_socket.secure:
+                our_key = pickle.dumps(security.getOurPublicKey())
+                self.server.parent_socket.data_to_send[self.client_address].append(our_key)
+                self.server.parent_socket.data_to_send_id[self.client_address].append(-2)
 
         self.header_received = False
 
@@ -151,55 +150,53 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
             if self.server.parent_socket.data_to_send[self.client_address]:
                 to_delete = []
                 msg_idx = []
-                self.server.parent_socket.lock.acquire()
-                for idx, data in enumerate(self.server.parent_socket.data_to_send[self.client_address]):
-                    not_header = self.server.parent_socket.data_to_send_id[self.client_address][idx] >= 0
-                    if self.server.parent_socket.sockets_config[self.client_address] & SOCKET_CONFIG.SECURE and not_header:
-                        try:
-                            data = self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
-                        except KeyError:
-                            continue
+                with self.server.parent_socket.lock:
+                    for idx, data in enumerate(self.server.parent_socket.data_to_send[self.client_address]):
+                        not_header = self.server.parent_socket.data_to_send_id[self.client_address][idx] >= 0
+                        if self.server.parent_socket.sockets_config[self.client_address] & SOCKET_CONFIG.SECURE and not_header:
+                            try:
+                                data = self.server.parent_socket.crypto_boxes[self.client_address].encrypt(data)
+                            except KeyError:
+                                continue
 
-                    if self.server.parent_socket.data_to_send_id[self.client_address][idx] == -3:
-                        data_header = struct.pack('!IH', 0, self.server.parent_socket.send_msg_idx[self.client_address])
-                        msg_idx.append((0, self.server.parent_socket.send_msg_idx[self.client_address]))
-                        self.server.parent_socket.send_msg_idx[self.client_address] += 1
-                    elif self.server.parent_socket.data_to_send_id[self.client_address][idx] == -1:
-                        data_header = b""
-                        msg_idx.append(None)
-                    else:
-                        data_header = struct.pack('!IH', len(data), self.server.parent_socket.send_msg_idx[self.client_address])
-                        msg_idx.append((len(data), self.server.parent_socket.send_msg_idx[self.client_address]))
-                        self.server.parent_socket.send_msg_idx[self.client_address] += 1
+                        if self.server.parent_socket.data_to_send_id[self.client_address][idx] == -3:
+                            data_header = struct.pack('!IH', 0, self.server.parent_socket.send_msg_idx[self.client_address])
+                            msg_idx.append((0, self.server.parent_socket.send_msg_idx[self.client_address]))
+                            self.server.parent_socket.send_msg_idx[self.client_address] += 1
+                        elif self.server.parent_socket.data_to_send_id[self.client_address][idx] == -1:
+                            data_header = b""
+                            msg_idx.append(None)
+                        else:
+                            data_header = struct.pack('!IH', len(data), self.server.parent_socket.send_msg_idx[self.client_address])
+                            msg_idx.append((len(data), self.server.parent_socket.send_msg_idx[self.client_address]))
+                            self.server.parent_socket.send_msg_idx[self.client_address] += 1
 
-                    if data_header:
-                        self.request.sendall(data_header)
-                    self.request.sendall(data)
+                        if data_header:
+                            self.request.sendall(data_header)
+                        self.request.sendall(data)
 
-                    to_delete.append(idx)
-                for id_idx, idx in enumerate(to_delete):
-                    if msg_idx[id_idx]:
-                        self.server.parent_socket.data_awaiting[self.client_address].append((msg_idx[id_idx], self.server.parent_socket.data_to_send[self.client_address][idx]))
-                        self.server.parent_socket.data_awaiting_id[self.client_address].append(self.server.parent_socket.data_to_send_id[self.client_address][idx])
-                for idx in reversed(to_delete):
-                    self.server.parent_socket.data_to_send[self.client_address].pop(idx)
-                    self.server.parent_socket.data_to_send_id[self.client_address].pop(idx)
-                self.server.parent_socket.lock.release()
+                        to_delete.append(idx)
+                    for id_idx, idx in enumerate(to_delete):
+                        if msg_idx[id_idx]:
+                            self.server.parent_socket.data_awaiting[self.client_address].append((msg_idx[id_idx], self.server.parent_socket.data_to_send[self.client_address][idx]))
+                            self.server.parent_socket.data_awaiting_id[self.client_address].append(self.server.parent_socket.data_to_send_id[self.client_address][idx])
+                    for idx in reversed(to_delete):
+                        self.server.parent_socket.data_to_send[self.client_address].pop(idx)
+                        self.server.parent_socket.data_to_send_id[self.client_address].pop(idx)
 
-            self.server.parent_socket.lock.acquire()
-            try:
-                self.server.parent_socket.data_received[self.client_address].extend(self.request.recv(4096))
-            except socket.error:
-                pass
+            with self.server.parent_socket.lock:
+                try:
+                    self.server.parent_socket.data_received[self.client_address].extend(self.request.recv(4096))
+                except socket.error:
+                    pass
 
-            if not self.header_received:
-                self.header_received = self.server.parent_socket.recv(source=self.client_address, timeout=0, _locks=False)
+                if not self.header_received:
+                    self.header_received = self.server.parent_socket.recv(source=self.client_address, timeout=0, _locks=False)
 
-            if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
-                source_key = self.server.parent_socket.recv(source=self.client_address, timeout=0, _locks=False)
-                if source_key:
-                    self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
-            self.server.parent_socket.lock.release()
+                if self.server.parent_socket.secure and not self.client_address in self.server.parent_socket.crypto_boxes:
+                    source_key = self.server.parent_socket.recv(source=self.client_address, timeout=0, _locks=False)
+                    if source_key:
+                        self.server.parent_socket.crypto_boxes[self.client_address] = security.getBox(source_key, self.client_address)
 
             try:
                 _, _, _ = select.select([self.request], [], [], self.server.parent_socket.poll_delay)
@@ -222,7 +219,7 @@ class SocketserverHandler(socketserver.BaseRequestHandler):
 
 class Communicator:
     """Communicator(self, secure=False, compress=None, serializer=slc.SER_BEST, buffer_cap=slc.INFINITE, timeout=30, retries=INFINITE, protocol="tcp")
-        
+
         Builds a new communicator.
 
         :param secure: Use encryption and authentication. This makes the
@@ -345,14 +342,13 @@ class Communicator:
         self.server_threads[-1].daemon = True
         self.server_threads[-1].start()
 
-        self.lock.acquire()
-        if self.port is None:
-            self.port = self.servers[-1].socket.getsockname()[1]
-        elif type(self.port) is int:
-            self.port = [self.port, self.servers[-1].socket.getsockname()[1]]
-        else:
-            self.port.append(self.servers[-1].socket.getsockname()[1])
-        self.lock.release()
+        with self.lock:
+            if self.port is None:
+                self.port = self.servers[-1].socket.getsockname()[1]
+            elif type(self.port) is int:
+                self.port = [self.port, self.servers[-1].socket.getsockname()[1]]
+            else:
+                self.port.append(self.servers[-1].socket.getsockname()[1])
 
     def advertise(self, name):
         """Advertise the current server on the network.
@@ -423,7 +419,7 @@ class Communicator:
             targets.
         :param raw: If the data must be serialized or not before sending.
 
-        :returns: Message ID. Can be used to determine whether or not this 
+        :returns: Message ID. Can be used to determine whether or not this
             message has been acknowledged by all its recipients.
         """
         if target is ALL:
@@ -591,7 +587,7 @@ class Communicator:
                 data_to_return = self.crypto_boxes[msg_source].decrypt(bytes(data_to_return))
             if self.sockets_config[target] & SOCKET_CONFIG.COMPRESS and (not self.secure or msg_source in self.crypto_boxes):
                 data_to_return = self.compress.decomp(data_to_return)
-            
+
             self.receive_cond.acquire()
             self.receive_cond.notify_all()
             self.receive_cond.release()
@@ -642,23 +638,22 @@ class Communicator:
 
     def _clientUpdatePorts(self):
         """Updates the ports variable according to the client sockets."""
-        self.lock.acquire()
-        for target, socket_ in self.sockets.items():
-            try:
-                this_port = socket_.getsockname()[1]
-            except (OSError, ValueError, socket.error):
-                continue
+        with self.lock:
+            for target, socket_ in self.sockets.items():
+                try:
+                    this_port = socket_.getsockname()[1]
+                except (OSError, ValueError, socket.error):
+                    continue
 
-            if self.port == this_port or (hasattr(self.port, '__iter__') and this_port in self.port):
-                continue
-            
-            if self.port is None:
-                self.port = this_port
-            elif type(self.port) is int:
-                self.port = [self.port, this_port]
-            else:
-                self.port.append(this_port)
-        self.lock.release()
+                if self.port == this_port or (hasattr(self.port, '__iter__') and this_port in self.port):
+                    continue
+
+                if self.port is None:
+                    self.port = this_port
+                elif type(self.port) is int:
+                    self.port = [self.port, this_port]
+                else:
+                    self.port.append(this_port)
 
     def _clientHandle(self):
         while 'client' in self.state:
@@ -686,15 +681,14 @@ class Communicator:
                     self.client_header_received[target] = False
 
                     # Send SLC header
-                    self.lock.acquire()
-                    self.data_to_send[target].insert(0, struct.pack('!B', self.config))
-                    self.data_to_send_id[target].insert(0, -3)
+                    with self.lock:
+                        self.data_to_send[target].insert(0, struct.pack('!B', self.config))
+                        self.data_to_send_id[target].insert(0, -3)
 
-                    if self.secure:
-                        our_key = self.serializer.dump(security.getOurPublicKey())
-                        self.data_to_send[target].insert(1, our_key)
-                        self.data_to_send_id[target].insert(1, -2)
-                    self.lock.release()
+                        if self.secure:
+                            our_key = self.serializer.dump(security.getOurPublicKey())
+                            self.data_to_send[target].insert(1, our_key)
+                            self.data_to_send_id[target].insert(1, -2)
 
                 sockets_to_remove = []
                 for target, socket_ in self.sockets.items():
@@ -717,75 +711,72 @@ class Communicator:
                     if self.data_to_send[target]:
                         to_delete = []
                         msg_idx = []
-                        self.lock.acquire()
-                        for idx, data in enumerate(self.data_to_send[target]):
-                            # Add encryption if activated
-                            not_header = self.data_to_send_id[target][idx] >= 0
-                            if self.sockets_config[target] & SOCKET_CONFIG.SECURE and not_header:
-                                try:
-                                    data = self.crypto_boxes[target].encrypt(data)
-                                except KeyError:
-                                    # remote key not received
-                                    continue
+                        with self.lock:
+                            for idx, data in enumerate(self.data_to_send[target]):
+                                # Add encryption if activated
+                                not_header = self.data_to_send_id[target][idx] >= 0
+                                if self.sockets_config[target] & SOCKET_CONFIG.SECURE and not_header:
+                                    try:
+                                        data = self.crypto_boxes[target].encrypt(data)
+                                    except KeyError:
+                                        # remote key not received
+                                        continue
 
-                            # Add the header
-                            if self.data_to_send_id[target][idx] == -3:
-                                data_header = struct.pack('!IH', 0, self.send_msg_idx[target])
-                                msg_idx.append((0, self.send_msg_idx[target]))
-                                self.send_msg_idx[target] += 1
-                            elif self.data_to_send_id[target][idx] == -1:
-                                data_header = b""
-                                msg_idx.append(None)
-                            else:
-                                data_header = struct.pack('!IH', len(data), self.send_msg_idx[target])
-                                msg_idx.append((len(data), self.send_msg_idx[target]))
-                                self.send_msg_idx[target] += 1
+                                # Add the header
+                                if self.data_to_send_id[target][idx] == -3:
+                                    data_header = struct.pack('!IH', 0, self.send_msg_idx[target])
+                                    msg_idx.append((0, self.send_msg_idx[target]))
+                                    self.send_msg_idx[target] += 1
+                                elif self.data_to_send_id[target][idx] == -1:
+                                    data_header = b""
+                                    msg_idx.append(None)
+                                else:
+                                    data_header = struct.pack('!IH', len(data), self.send_msg_idx[target])
+                                    msg_idx.append((len(data), self.send_msg_idx[target]))
+                                    self.send_msg_idx[target] += 1
 
-                            # Send the data
-                            try:
-                                if data_header:
-                                    res = socket_.sendall(data_header)
-                                res = socket_.sendall(data)
-                            except (BrokenPipeError, OSError):
+                                # Send the data
                                 try:
-                                    socket_.shutdown(socket.SHUT_RDWR)
-                                    socket_.close()
-                                except OSError:
-                                    # Socket was already closed
-                                    pass
-                                sockets_to_remove.append(target)
-                                break
-                            to_delete.append(idx)
-                        for id_idx, idx in enumerate(to_delete):
-                            if msg_idx[id_idx]:
-                                self.data_awaiting[target].append((msg_idx[id_idx], self.data_to_send[target][idx]))
-                                self.data_awaiting_id[target].append(self.data_to_send_id[target][idx])
-                        for idx in reversed(to_delete):
-                            self.data_to_send[target].pop(idx)
-                            self.data_to_send_id[target].pop(idx)
-                        self.lock.release()
+                                    if data_header:
+                                        res = socket_.sendall(data_header)
+                                    res = socket_.sendall(data)
+                                except (BrokenPipeError, OSError):
+                                    try:
+                                        socket_.shutdown(socket.SHUT_RDWR)
+                                        socket_.close()
+                                    except OSError:
+                                        # Socket was already closed
+                                        pass
+                                    sockets_to_remove.append(target)
+                                    break
+                                to_delete.append(idx)
+                            for id_idx, idx in enumerate(to_delete):
+                                if msg_idx[id_idx]:
+                                    self.data_awaiting[target].append((msg_idx[id_idx], self.data_to_send[target][idx]))
+                                    self.data_awaiting_id[target].append(self.data_to_send_id[target][idx])
+                            for idx in reversed(to_delete):
+                                self.data_to_send[target].pop(idx)
+                                self.data_to_send_id[target].pop(idx)
 
                 for sock in sockets_to_remove:
                     self.sockets.pop(sock, None)
 
                 for target, socket_ in self.sockets.items():
-                    self.lock.acquire()
-                    try:
-                        self.data_received[target].extend(socket_.recv(4096))
-                    except socket.error:
-                        pass
+                    with self.lock:
+                        try:
+                            self.data_received[target].extend(socket_.recv(4096))
+                        except socket.error:
+                            pass
 
-                    # Receive and process the connection header
-                    if not self.client_header_received[target]:
-                        self.client_header_received[target] = self.recv(source=target, timeout=0, _locks=False)
+                        # Receive and process the connection header
+                        if not self.client_header_received[target]:
+                            self.client_header_received[target] = self.recv(source=target, timeout=0, _locks=False)
 
-                    if self.secure and not target in self.crypto_boxes:
-                        source_key = self.recv(source=target, timeout=0, _locks=False)
-                        if source_key:
-                            self.crypto_boxes[target] = security.getBox(source_key, target)
+                        if self.secure and not target in self.crypto_boxes:
+                            source_key = self.recv(source=target, timeout=0, _locks=False)
+                            if source_key:
+                                self.crypto_boxes[target] = security.getBox(source_key, target)
 
-                    self.lock.release()
-            
             self._clientUpdatePorts()
 
             try:
